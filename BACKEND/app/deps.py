@@ -8,8 +8,7 @@ from app import models
 from app.database import get_db
 from app.security import decode_access_token
 
-# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/caregiver/login", auto_error=False)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/caregiver/login", auto_error=False)
 
 
 def _unauthorized(detail: str = "Could not validate credentials"):

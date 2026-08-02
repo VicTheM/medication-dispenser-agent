@@ -10,12 +10,24 @@ Postgres later by changing one env var.
 
 ## Run it
 
+### Locally
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # edit SECRET_KEY and AI_API_BASE_URL at minimum
 uvicorn app.main:app --reload
 ```
+
+### With Docker (one command, includes a persistent volume for the SQLite file + uploaded media)
+```bash
+SECRET_KEY=$(openssl rand -hex 32) AI_API_BASE_URL=https://your-ai-service docker compose up --build
+```
+
+### Deploying to Render (or any host with an ephemeral filesystem)
+Local disk gets wiped on every deploy/restart unless you attach persistent
+storage. See `docs/DEPLOYMENT.md` for the two fixes (a mounted persistent
+disk via the included `render.yaml`, or the recommended Postgres + object
+storage path for production).
 
 API docs: http://localhost:8000/docs
 
@@ -38,6 +50,11 @@ API docs: http://localhost:8000/docs
 - `app/ws_manager.py` — in-memory registry of live device WebSocket
   connections, used to push real-time commands.
 - `app/ai_client.py` — thin httpx wrapper around the AI service.
+- `app/scheduler.py` — in-process background jobs (APScheduler, no separate
+  worker needed) that turn raw data into `Notification` rows: missed doses
+  (checked every 5 min, with a 30-min grace period and same-day de-dupe),
+  device-gone-offline transitions, and low-battery alerts (checked every
+  1 min, at most once per 12h per device).
 
 Two docs for your other teams:
 - `docs/FRONTEND_GUIDE.md` — everything the web/mobile app developer needs.

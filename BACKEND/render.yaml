@@ -1,0 +1,37 @@
+# Render Blueprint — deploys MedAdhere API with a persistent disk so the
+# SQLite database and uploaded media (videos, knowledge docs, voice audio)
+# survive deploys/restarts instead of being wiped with the container.
+#
+# Usage: push this file to your repo root, then in Render: New -> Blueprint,
+# point it at the repo. Render will read this file and provision the service.
+#
+# IMPORTANT: persistent disks are NOT available on Render's free tier.
+# You need at least a paid instance type for the disk block below to apply.
+# If you're on the free tier, use Postgres + object storage instead (see
+# docs/DEPLOYMENT.md in this project for that path).
+
+services:
+  - type: web
+    name: medadhere-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # or any paid plan - persistent disks require a paid instance
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: AI_API_BASE_URL
+        value: https://your-ai-service.example.com
+      - key: DATABASE_URL
+        value: sqlite:////app/data/medadhere.db
+      - key: STORAGE_DIR
+        value: /app/data/storage
+      - key: VIDEO_DIR
+        value: /app/data/storage/videos
+      - key: KNOWLEDGE_DIR
+        value: /app/data/storage/knowledge
+      - key: VOICE_DIR
+        value: /app/data/storage/voice
+    disk:
+      name: medadhere-data
+      mountPath: /app/data
+      sizeGB: 5

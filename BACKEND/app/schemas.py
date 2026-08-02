@@ -111,6 +111,11 @@ class DeviceStatusOut(BaseModel):
         from_attributes = True
 
 
+class DeviceSecretOut(BaseModel):
+    device_uid: str
+    device_secret: str
+
+
 class DeviceCommandRequest(BaseModel):
     command_type: str = Field(description="update_schedule|manual_dispense|restart|sync|configure")
     payload: Optional[dict] = None

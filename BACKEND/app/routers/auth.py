@@ -5,20 +5,8 @@ from app import models, schemas
 from app.database import get_db
 from app.security import create_access_token, hash_password, verify_password
 
-from fastapi.security import OAuth2PasswordRequestForm
-
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-# auth.py
-from fastapi.security import OAuth2PasswordRequestForm
-
-@router.post("/token", response_model=schemas.Token)
-def login_for_swagger(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    caregiver = db.query(models.Caregiver).filter(models.Caregiver.email == form_data.username).first()
-    if not caregiver or not verify_password(form_data.password, caregiver.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_access_token(subject=caregiver.id, role="caregiver")
-    return schemas.Token(access_token=token, role="caregiver")
 
 @router.post("/caregiver/register", response_model=schemas.CaregiverOut, status_code=201)
 def register_caregiver(payload: schemas.CaregiverCreate, db: Session = Depends(get_db)):

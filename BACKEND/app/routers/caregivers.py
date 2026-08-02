@@ -117,6 +117,37 @@ def get_patient_device(patient_id: str, caregiver: models.Caregiver = Depends(ge
     return patient.device
 
 
+@router.get("/patients/{patient_id}/device/secret", response_model=schemas.DeviceSecretOut)
+def reveal_device_secret(patient_id: str, caregiver: models.Caregiver = Depends(get_current_caregiver),
+                          db: Session = Depends(get_db)):
+    """
+    Re-reveal the device's credentials, for when the one-time reveal at
+    assignment time wasn't copied in time. Caregiver-only, scoped to their
+    own patient.
+    """
+    patient = require_owned_patient(patient_id, caregiver, db)
+    if not patient.device:
+        raise HTTPException(status_code=404, detail="No device assigned to this patient")
+    return schemas.DeviceSecretOut(device_uid=patient.device.device_uid, device_secret=patient.device.device_secret)
+
+
+@router.post("/patients/{patient_id}/device/regenerate-secret", response_model=schemas.DeviceSecretOut)
+def regenerate_device_secret(patient_id: str, caregiver: models.Caregiver = Depends(get_current_caregiver),
+                              db: Session = Depends(get_db)):
+    """
+    Rotates the device secret (e.g. if it was shared too widely). The
+    physical device will need to be reprovisioned with the new secret -
+    it will fail to authenticate on its next connection attempt until then.
+    """
+    patient = require_owned_patient(patient_id, caregiver, db)
+    if not patient.device:
+        raise HTTPException(status_code=404, detail="No device assigned to this patient")
+    patient.device.device_secret = models.gen_secret()
+    db.commit()
+    db.refresh(patient.device)
+    return schemas.DeviceSecretOut(device_uid=patient.device.device_uid, device_secret=patient.device.device_secret)
+
+
 @router.post("/devices/{device_uid}/commands", status_code=202)
 async def send_device_command(device_uid: str, payload: schemas.DeviceCommandRequest,
                                caregiver: models.Caregiver = Depends(get_current_caregiver),

@@ -1,0 +1,15 @@
+services:
+  medadhere-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-this-to-a-long-random-string}
+      AI_API_BASE_URL: ${AI_API_BASE_URL:-http://localhost:9000}
+      AI_API_TIMEOUT_SECONDS: ${AI_API_TIMEOUT_SECONDS:-30}
+    volumes:
+      - medadhere-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  medadhere-data:

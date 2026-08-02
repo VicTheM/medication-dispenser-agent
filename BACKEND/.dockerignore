@@ -1,0 +1,7 @@
+.venv
+__pycache__
+*.pyc
+medadhere.db
+storage/
+.env
+.git

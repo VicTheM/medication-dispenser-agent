@@ -1,7 +1,6 @@
 # Frontend Developer Guide — MedAdhere API
 
-Base URL: `https://<your-host>` (local dev: `http://localhost:8000`)
-Interactive docs: `/docs` (Swagger) or `/redoc`.
+Base URL: [https://medication-dispenser-agent.onrender.com](https://medication-dispenser-agent.onrender.com) (local dev: `http://localhost:8000`)
 
 Everything is JSON over HTTPS except file uploads (multipart) and one
 WebSocket used only by the hardware — the app never touches the WebSocket.
@@ -164,3 +163,5 @@ validation, 502 upstream AI service unreachable).
   push/email/SMS delivery on top by polling or adding a webhook later.
 - Rendering/streaming video and audio files — the API returns file paths /
   base64 blobs; serve them via your CDN/static layer.
+
+
