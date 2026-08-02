@@ -4,7 +4,6 @@
   ============================================================
   Tests, one function per component:
     1. HC-SR04 Ultrasonic Sensor      (Trig/Echo)
-    2. MG996R Servo Motor             (PWM)
     3. 28BYJ-48 Stepper + ULN2003     (4-wire driver)
     4. 16x2 I2C LCD                   (I2C)
     5. Buzzer                         (Digital/Tone)
@@ -12,15 +11,12 @@
     7. IR Sender/Receiver module      (Digital obstacle/distance)
 
   REQUIRED LIBRARIES (install via Library Manager):
-    - ESP32Servo          by Kevin Harrington / John K. Bennett
     - LiquidCrystal I2C   by Frank de Brabander (or Marco Schwartz)
     - Stepper             (built-in, comes with Arduino IDE)
 
   Wiring summary (change pins below if yours differ):
     HC-SR04   : TRIG->GPIO5   ECHO->GPIO18 (use a voltage divider
                 on ECHO, since it's 5V logic and ESP32 is 3.3V)
-    MG996R    : Signal->GPIO13 (external 5-6V supply for the servo,
-                common GND with ESP32)
     28BYJ-48  : IN1->GPIO14 IN2->GPIO27 IN3->GPIO26 IN4->GPIO25
                 (ULN2003 powered from external 5V, common GND)
     LCD I2C   : SDA->GPIO21  SCL->GPIO22  (addr usually 0x27 or 0x3F)
@@ -31,9 +27,14 @@
 */
 
 #include <Wire.h>
-#include <ESP32Servo.h>
 #include <LiquidCrystal_I2C.h>
 #include <Stepper.h>
+// ------------------------------------------------------------
+// INDICATORS
+// ------------------------------------------------------------
+#define GREEN 13
+#define RED 12
+#define BLUE 2
 
 // ------------------------------------------------------------
 // 1. ULTRASONIC SENSOR CONFIG
@@ -42,19 +43,14 @@
 #define ECHO_PIN        18
 #define SOUND_SPEED_CM  0.0343  // cm per microsecond
 
-// ------------------------------------------------------------
-// 2. SERVO MOTOR CONFIG
-// ------------------------------------------------------------
-#define SERVO_PIN       13
-Servo mg996rServo;
 
 // ------------------------------------------------------------
 // 3. STEPPER MOTOR CONFIG (28BYJ-48 + ULN2003)
 // ------------------------------------------------------------
-#define STEPPER_IN1     14
-#define STEPPER_IN2     27
-#define STEPPER_IN3     26
-#define STEPPER_IN4     25
+#define STEPPER_IN1     19
+#define STEPPER_IN2     14
+#define STEPPER_IN3     23
+#define STEPPER_IN4     15
 #define STEPS_PER_REV   2048   // 28BYJ-48 with internal gearbox
 // NOTE: Stepper library expects wiring order IN1-IN3-IN2-IN4
 Stepper stepperMotor(STEPS_PER_REV, STEPPER_IN1, STEPPER_IN3, STEPPER_IN2, STEPPER_IN4);
@@ -77,7 +73,7 @@ LiquidCrystal_I2C lcd(LCD_ADDRESS, LCD_COLS, LCD_ROWS);
 // ------------------------------------------------------------
 // 6. BUTTON CONFIG (interrupt, default INPUT_PULLUP -> active LOW)
 // ------------------------------------------------------------
-#define BUTTON_PIN      15
+#define BUTTON_PIN      35
 volatile bool buttonFlag = false;
 volatile unsigned long lastInterruptTime = 0;
 #define DEBOUNCE_MS     200
@@ -97,8 +93,7 @@ void IRAM_ATTR handleButtonPress() {
 // obstacle sensors: digital OUT goes LOW when an object is detected.
 // If your module also exposes an analog "AO" pin, wire it to an ADC
 // pin (e.g. GPIO32) and set IR_HAS_ANALOG to true.
-#define IR_PIN          34
-#define IR_ANALOG_PIN   32
+#define IR_PIN          32
 #define IR_HAS_ANALOG   false
 
 // ------------------------------------------------------------
@@ -119,10 +114,11 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  // Servo
-  ESP32PWM::allocateTimer(0);
-  mg996rServo.setPeriodHertz(50);       // standard 50Hz servo
-  mg996rServo.attach(SERVO_PIN, 500, 2400);
+  // indicators
+  pinMode(GREEN, OUTPUT);
+  pinMode(BLUE, OUTPUT);
+  pinMode(RED, OUTPUT);
+
 
   // Stepper
   stepperMotor.setSpeed(10); // RPM
@@ -144,13 +140,16 @@ void setup() {
 
   // IR module
   pinMode(IR_PIN, INPUT);
-  if (IR_HAS_ANALOG) {
-    pinMode(IR_ANALOG_PIN, INPUT);
-  }
-
   delay(1000);
   lcd.clear();
   Serial.println("Setup complete. Starting test loop.\n");
+
+  digitalWrite(BLUE, HIGH);
+
+  digitalWrite(RED, HIGH);
+
+  digitalWrite(GREEN, HIGH);
+
 }
 
 
@@ -161,10 +160,6 @@ void loop() {
   checkButton();       // non-blocking, always checked
 
   testUltrasonic();
-  checkButton();
-  delay(TEST_DELAY_MS);
-
-  testServo();
   checkButton();
   delay(TEST_DELAY_MS);
 
@@ -179,6 +174,13 @@ void loop() {
   testIR();
   checkButton();
   delay(TEST_DELAY_MS);
+
+
+  digitalWrite(BLUE, LOW);
+
+  digitalWrite(RED, LOW);
+
+  digitalWrite(GREEN, LOW);
 }
 
 
@@ -204,52 +206,15 @@ float readUltrasonicDistanceCM() {
 void testUltrasonic() {
   float distance = readUltrasonicDistanceCM();
   Serial.print("[Ultrasonic] Distance: ");
-  if (distance < 0) {
-    Serial.println("Out of range");
-  } else {
-    Serial.print(distance);
-    Serial.println(" cm");
-  }
+  Serial.print(distance);
+  Serial.println(" cm");
 
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Ultrasonic:");
   lcd.setCursor(0, 1);
-  if (distance < 0) {
-    lcd.print("Out of range");
-  } else {
-    lcd.print(distance);
-    lcd.print(" cm");
-  }
-}
-
-// ---------- 2. SERVO ----------
-void testServo() {
-  Serial.println("[Servo] Sweeping 0 -> 90 -> 180 -> 90");
-
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Servo Test");
-
-  moveServoTo(0);
-  delay(500);
-  moveServoTo(90);
-  delay(500);
-  moveServoTo(180);
-  delay(500);
-  moveServoTo(90);
-}
-
-void moveServoTo(int angle) {
-  angle = constrain(angle, 0, 180);
-  mg996rServo.write(angle);
-  Serial.print("[Servo] Angle set to: ");
-  Serial.println(angle);
-
-  lcd.setCursor(0, 1);
-  lcd.print("Angle: ");
-  lcd.print(angle);
-  lcd.print("   "); // clear trailing chars
+  lcd.print(distance);
+  lcd.print(" cm");
 }
 
 // ---------- 3. STEPPER ----------
@@ -317,12 +282,6 @@ void testIR() {
   lcd.print("IR Sensor Test");
   lcd.setCursor(0, 1);
   lcd.print(objectDetected ? "Object: YES" : "Object: NO");
-
-  if (IR_HAS_ANALOG) {
-    int raw = readIRAnalogRaw();
-    Serial.print("[IR] Analog raw: ");
-    Serial.println(raw);
-  }
 }
 
 // Digital IR read: most obstacle-avoidance IR modules pull the
@@ -330,9 +289,4 @@ void testIR() {
 bool readIRDigital() {
   int val = digitalRead(IR_PIN);
   return (val == LOW); // change to (val == HIGH) if your module is active-high
-}
-
-// Optional: raw analog reading if module exposes an AO pin
-int readIRAnalogRaw() {
-  return analogRead(IR_ANALOG_PIN); // 0-4095 on ESP32 (12-bit ADC)
 }
