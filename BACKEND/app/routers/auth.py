@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -40,3 +41,19 @@ def login_patient(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(subject=patient.id, role="patient")
     return schemas.Token(access_token=token, role="patient")
+
+
+@router.post("/token", response_model=schemas.Token, include_in_schema=False)
+def login_for_swagger(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Form-encoded login used by Swagger UI's Authorize button (username=email)."""
+    caregiver = db.query(models.Caregiver).filter(models.Caregiver.email == form_data.username).first()
+    if caregiver and verify_password(form_data.password, caregiver.hashed_password):
+        token = create_access_token(subject=caregiver.id, role="caregiver")
+        return schemas.Token(access_token=token, role="caregiver")
+
+    patient = db.query(models.Patient).filter(models.Patient.email == form_data.username).first()
+    if patient and patient.hashed_password and verify_password(form_data.password, patient.hashed_password):
+        token = create_access_token(subject=patient.id, role="patient")
+        return schemas.Token(access_token=token, role="patient")
+
+    raise HTTPException(status_code=401, detail="Invalid email or password")
