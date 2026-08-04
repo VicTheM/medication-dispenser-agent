@@ -86,6 +86,16 @@ void loop() {
 
   ButtonEvent btn = buttonTick();
 
+  if (btn == ButtonEvent::FACTORY_RESET) {
+    // works from any state - button hold overrides whatever we were doing
+    Serial.println("[button] factory reset triggered - wiping NVS");
+    displayMessage("Factory reset", "Erasing...");
+    indicatorsSetPattern(IndicatorPattern::CONFIG_MODE);
+    storageClearAll();
+    delay(1200);
+    ESP.restart();
+  }
+
   switch (s_state) {
     case DeviceState::BOOT:
       break;
@@ -191,13 +201,16 @@ void loop() {
     }
 
     case DeviceState::DISPENSING: {
-      if (!carouselIsMoving() && millis() - s_stateEnteredAt < 50) {
+      static bool s_carouselCmdSent = false;
+      if (!s_carouselCmdSent) {
         carouselGoTo(s_activeCompartment);
+        s_carouselCmdSent = true;
       }
       indicatorsSetPattern(IndicatorPattern::DISPENSING);
       displayMessage("Dispensing", compartmentLetter(s_activeCompartment));
 
-      if (!carouselIsMoving() && millis() - s_stateEnteredAt > 300) {
+      if (s_carouselCmdSent && !carouselIsMoving() && millis() - s_stateEnteredAt > 300) {
+        s_carouselCmdSent = false; // ready for the next dispense
         reportDispense(s_activeCompartment, "success", !wifiIsConnected());
         camSendControl('V', ADHERENCE_VIDEO_MS);
         enterState(DeviceState::MONITOR_PICKUP);
@@ -276,7 +289,7 @@ void enterState(DeviceState s) {
 
 String compartmentLetter(uint8_t idx) {
   if (idx >= NUM_COMPARTMENTS) return "?";
-  char letters[] = "ABCDEFG";
+  char letters[] = "ABCDEFGH";
   return String(letters[idx]);
 }
 
@@ -408,10 +421,13 @@ void onRemoteCommand(const String &type, const String &commandId, const String &
     StaticJsonDocument<128> doc;
     deserializeJson(doc, payloadJson);
     const char *compStr = doc["compartment"] | "A";
-    uint8_t idx = compStr[0] - 'A';
+    char c = toupper(compStr[0]);
+    uint8_t idx = c - 'A';
     if (idx < NUM_COMPARTMENTS) {
       s_activeCompartment = idx;
       enterState(DeviceState::DISPENSING);
+    } else {
+      Serial.printf("[cmd] manual_dispense: invalid compartment '%s'\n", compStr);
     }
   } else if (type == "restart") {
     ESP.restart();

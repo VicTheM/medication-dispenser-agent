@@ -72,6 +72,14 @@ static bool parseUrl(const String &url, ParsedUrl &out) {
   return true;
 }
 
+// Joins a base path (e.g. "/" or "/api") with a route suffix without
+// producing a double slash when base is just "/".
+static String joinPath(const String &base, const String &suffix) {
+  if (base == "/" || base.length() == 0) return suffix;
+  if (base.endsWith("/") && suffix.startsWith("/")) return base + suffix.substring(1);
+  return base + suffix;
+}
+
 // =======================================================================
 // WebSocket control channel
 // =======================================================================
@@ -80,7 +88,7 @@ static ScheduleUpdateCallback s_scheduleCb = nullptr;
 static RemoteCommandCallback s_commandCb = nullptr;
 
 static void parseScheduleJson(JsonObject compartments, CompartmentSlot slots[NUM_COMPARTMENTS], String &timezoneOut) {
-  const char *letters = "ABCDEFG";
+  const char *letters = "ABCDEFGH";
   for (int i = 0; i < NUM_COMPARTMENTS; i++) {
     char letter[2] = {letters[i], 0};
     slots[i] = CompartmentSlot(); // reset to inactive/defaults
@@ -214,9 +222,9 @@ static bool httpJsonRequest(const String &method, const String &path, const Stri
 
   if (u.isHttps) {
     secureClient.setInsecure(); // see DEVICE_BRIEF.md "TLS trust model" for the tradeoff + hardening path
-    began = http.begin(secureClient, u.host, u.port, u.path + path, true);
+    began = http.begin(secureClient, u.host, u.port, joinPath(u.path, path), true);
   } else {
-    began = http.begin(plainClient, u.host, u.port, u.path + path);
+    began = http.begin(plainClient, u.host, u.port, joinPath(u.path, path));
   }
   if (!began) return false;
 
@@ -388,7 +396,7 @@ static bool rawMultipartUpload(const String &path,
 
   // ---- Request line + headers ----
   String request;
-  request += "POST "; request += (u.path + path); request += " HTTP/1.1\r\n";
+  request += "POST "; request += joinPath(u.path, path); request += " HTTP/1.1\r\n";
   request += "Host: "; request += u.host; request += "\r\n";
   request += "X-Device-Id: "; request += s_deviceUid; request += "\r\n";
   request += "X-Device-Secret: "; request += s_deviceSecret; request += "\r\n";
@@ -506,7 +514,7 @@ bool downloadVoiceAudio(const String &interactionId, uint8_t **outBuf, uint32_t 
   WiFiClient plainClient;
   HTTPClient http;
   bool began;
-  String path = u.path + "/devices/voice-query/" + interactionId + "/audio";
+  String path = joinPath(u.path, "/devices/voice-query/" + interactionId + "/audio");
 
   if (u.isHttps) {
     secureClient.setInsecure();

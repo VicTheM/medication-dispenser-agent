@@ -35,7 +35,7 @@
 #define PIN_STEP_IN3      10
 #define PIN_STEP_IN4      11
 #define STEPS_PER_REV     2048
-#define NUM_COMPARTMENTS  7
+#define NUM_COMPARTMENTS  8
 // 2048 / 7 is not a whole number (292.57) - see DEVICE_BRIEF.md "Carousel
 // homing" for why this matters and how drift is corrected.
 #define PIN_HOME_SENSOR   16       // optional; #define HAS_HOME_SENSOR to enable
@@ -60,6 +60,7 @@
 // ---------------------------------------------------------------------
 #define PIN_BUTTON        21
 #define LONG_PRESS_MS      900
+#define FACTORY_RESET_HOLD_MS (8UL * 1000UL)  // hold button this long to wipe NVS and return to first-time setup
 
 // ---------------------------------------------------------------------
 // IR "laser" beam-break sensor at the picking-tray door
@@ -84,10 +85,10 @@
 // ---------------------------------------------------------------------
 // Timing
 // ---------------------------------------------------------------------
-#define TELEMETRY_INTERVAL_MS      30000UL
+#define TELEMETRY_INTERVAL_MS      3000UL                   // 3s
 #define ALERT_MAX_WAIT_MS          (5UL * 60UL * 1000UL)   // give up ringing after 5 min
-#define PICKUP_MONITOR_MS          (5UL * 60UL * 1000UL)   // watch for pickup for 5 min
-#define ADHERENCE_VIDEO_MS         (120UL * 1000UL)        // 2-minute clip
+#define PICKUP_MONITOR_MS          (2UL * 60UL * 1000UL)   // watch for pickup for 2 min
+#define ADHERENCE_VIDEO_MS         (10UL * 1000UL)        // 10 secs
 #define WIFI_CONNECT_TIMEOUT_MS    20000UL
 #define WS_RECONNECT_INTERVAL_MS   5000UL
 #define VOICE_MAX_RECORD_MS        (15UL * 1000UL)
@@ -117,4 +118,4 @@
 #define NVS_KEY_CAROUSEL_POS "car_pos"
 #define NVS_KEY_AP_PASSWORD  "ap_pass"
 
-#define DEFAULT_API_BASE   "https://your-backend.example.com"
+#define DEFAULT_API_BASE   "https://medication-dispenser-agent.onrender.com"

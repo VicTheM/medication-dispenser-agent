@@ -22,6 +22,7 @@ LCD shows **time to next dose** and its medication names most of the time — th
 **The button**:
 - **Long-press** (~1s+): ask the assistant a question out loud. LCD prompts "Listening...", the CAM board records, gets sent to the AI, and the spoken answer plays back through the CAM's speaker.
 - **Short-press**: enter config mode (see above).
+- **Hold ~8s (`FACTORY_RESET_HOLD_MS`)**: factory reset - wipes all saved WiFi/API/device credentials and carousel calibration from NVS, then reboots straight into first-time config mode. Works from any state, overriding whatever the device was doing.
 
 ## Design decisions worth knowing about
 
