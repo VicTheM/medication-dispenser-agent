@@ -38,7 +38,7 @@
                 on ECHO, since it's 5V logic and S3 is 3.3V)
     28BYJ-48  : IN1->GPIO8  IN2->GPIO9  IN3->GPIO10  IN4->GPIO11
                 (ULN2003 powered from external 5V, common GND)
-    LCD I2C   : SDA->GPIO12  SCL->GPIO13  (addr usually 0x27 or 0x3F)
+    LCD I2C   : SDA->GPIO12  SCL->GPIO13  (addr usuallywwedf  0x27 or 0x3F)
     Buzzer    : +  ->GPIO14
     Button    : one leg->GPIO21, other leg->GND (internal pull-up used)
     IR module : OUT->GPIO38
