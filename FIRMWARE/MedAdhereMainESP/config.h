@@ -24,7 +24,7 @@
 #define PIN_TRIG          7
 #define PIN_ECHO          15
 #define SOUND_SPEED_CM_US 0.0343f
-#define APPROACH_RANGE_CM 70.0f    // person is considered present below 70 cm
+#define APPROACH_RANGE_CM 50.0f   // "within range" threshold from the brief
 
 // ---------------------------------------------------------------------
 // Carousel stepper (28BYJ-48 + ULN2003) - selects which compartment
@@ -35,7 +35,7 @@
 #define PIN_STEP_IN3      10
 #define PIN_STEP_IN4      11
 #define STEPS_PER_REV     2048
-#define NUM_COMPARTMENTS  8
+#define NUM_COMPARTMENTS  7
 // 2048 / 7 is not a whole number (292.57) - see DEVICE_BRIEF.md "Carousel
 // homing" for why this matters and how drift is corrected.
 #define PIN_HOME_SENSOR   16       // optional; #define HAS_HOME_SENSOR to enable
@@ -51,7 +51,12 @@
 #define PIN_I2C_SCL       13
 
 // ---------------------------------------------------------------------
-// Buzzer
+// Buzzer - now an active-LOW relay module (not a piezo/tone buzzer):
+// energized (audible/on) when the pin is driven LOW, silent when HIGH.
+// NOTE: if this is a mechanical relay (not solid-state), be aware the
+// faster patterns in indicators.cpp (e.g. PERSON_APPROACHED, ~400ms cycle)
+// switch it fairly quickly and repeatedly - fine for a solid-state relay,
+// but may wear a mechanical one faster over time.
 // ---------------------------------------------------------------------
 #define PIN_BUZZER        14
 
@@ -60,7 +65,6 @@
 // ---------------------------------------------------------------------
 #define PIN_BUTTON        21
 #define LONG_PRESS_MS      900
-#define FACTORY_RESET_HOLD_MS (8UL * 1000UL)  // hold button this long to wipe NVS and return to first-time setup
 
 // ---------------------------------------------------------------------
 // IR "laser" beam-break sensor at the picking-tray door
@@ -68,28 +72,47 @@
 #define PIN_IR_BEAM       38
 
 // ---------------------------------------------------------------------
-// Serial2 link to the ESP32-CAM (Ai Thinker) board
+// HX711 + load cell (picking tray)
+// ---------------------------------------------------------------------
+#define PIN_HX711_DOUT    39
+#define PIN_HX711_SCK     40
+#define HX711_CAL_FACTOR  -7050.0f   // MUST be recalibrated per unit - see brief
+#define TRAY_PICKUP_DELTA_G 2.0f     // grams of change that counts as "picked up"
+
+// ---------------------------------------------------------------------
+// Serial2 link to the audio/video board. It now handles its own WiFi and
+// AI calls end-to-end - the main board just sends a one-letter trigger and
+// waits for a one-byte result, so there's no more file relay over this
+// link and no need for a high baud rate.
 // ---------------------------------------------------------------------
 #define PIN_CAM_RX        17   // wire to CAM board's TX
 #define PIN_CAM_TX        18   // wire to CAM board's RX
-#define CAM_SERIAL_BAUD   921600  // 115200 is too slow for video-sized transfers - see CAM_SERIAL_PROTOCOL.md
+#define CAM_SERIAL_BAUD   115200
 
 // ---------------------------------------------------------------------
 // Timing
 // ---------------------------------------------------------------------
-#define TELEMETRY_INTERVAL_MS      3000UL                   // 3s
-#define PICKUP_MONITOR_MS          (1UL * 60UL * 1000UL)   // watch for pickup for 1 min
-#define ADHERENCE_VIDEO_MS         (10UL * 1000UL)        // 10 secs
+#define TELEMETRY_INTERVAL_MS      30000UL
+#define ALERT_MAX_WAIT_MS          (5UL * 60UL * 1000UL)   // give up ringing after 5 min
+#define PICKUP_MONITOR_MS          (5UL * 60UL * 1000UL)   // watch for pickup for 5 min
+#define AUDIO_TIMEOUT_MS           (3UL * 60UL * 1000UL)         // wait this long for the CAM board's audio-task result (3 minutes)
+#define VIDEO_TIMEOUT_MS           (3UL * 60UL * 1000UL)        // wait this long for the CAM board's video-task result (3 minutes)
 #define WIFI_CONNECT_TIMEOUT_MS    20000UL
 #define WS_RECONNECT_INTERVAL_MS   5000UL
-#define VOICE_MAX_RECORD_MS        (15UL * 1000UL)
+
+// ---------------------------------------------------------------------
+// Timezone - schedule times from the backend/app are the patient's local
+// wall-clock. The device needs a UTC offset to match "now" against them
+// correctly (set via the config portal). Default 0 = UTC.
+// ---------------------------------------------------------------------
+#define DEFAULT_UTC_OFFSET_HOURS   1
 
 // ---------------------------------------------------------------------
 // Config portal (local setup access point)
 // ---------------------------------------------------------------------
 #define CONFIG_AP_SSID_PREFIX  "MedAdhere-Setup-"   // + short device id suffix
 #define CONFIG_AP_PASSWORD_DEFAULT "medadhere-setup"  // change on first boot - see brief
-#define CONFIG_PORTAL_TIMEOUT_MS (10UL * 60UL * 1000UL)  // auto-exit after 10 min idle
+#define CONFIG_PORTAL_TIMEOUT_MS (15UL * 60UL * 1000UL)  // auto-exit after 15 min idle
 
 // ---------------------------------------------------------------------
 // Offline cache sizing (RAM-backed - see brief for the tradeoff)
@@ -108,5 +131,6 @@
 #define NVS_KEY_DEV_SECRET "dev_secret"
 #define NVS_KEY_CAROUSEL_POS "car_pos"
 #define NVS_KEY_AP_PASSWORD  "ap_pass"
+#define NVS_KEY_UTC_OFFSET   "utc_off"
 
-#define DEFAULT_API_BASE   "https://medication-dispenser-agent.onrender.com"
+#define DEFAULT_API_BASE   "https://medication-dispenser-agent.onrender.com/"

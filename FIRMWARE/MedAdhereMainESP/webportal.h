@@ -10,4 +10,3 @@ void webportalLoop();  // call every loop() iteration while active; handles
                         // requests and the idle auto-timeout
 void webportalStop();
 bool webportalIsActive();
-bool webportalSaveCompleted();

@@ -1,6 +1,7 @@
 #include "sensors.h"
 #include "config.h"
 #include "storage.h"
+#include <HX711.h>
 
 // =======================================================================
 // Ultrasonic
@@ -19,9 +20,10 @@ float ultrasonicReadCM() {
   digitalWrite(PIN_TRIG, LOW);
 
   long duration = pulseIn(PIN_ECHO, HIGH, 30000UL); // 30ms timeout, ~5m max
-  if (duration == 0) return -1;
+  if (duration == 0) return 500;
   return (duration * SOUND_SPEED_CM_US) / 2.0f;
 }
+
 
 // =======================================================================
 // IR beam-break ("laser") - the tray door is the normal obstacle
@@ -32,6 +34,32 @@ void beamInit() {
 
 bool beamObstacleDetected() {
   return digitalRead(PIN_IR_BEAM) == LOW; // module is active-low; invert here if yours differs
+}
+
+// =======================================================================
+// HX711 load cell
+// =======================================================================
+static HX711 s_scale;
+static bool s_scaleReady = false;
+
+void scaleInit() {
+  s_scale.begin(PIN_HX711_DOUT, PIN_HX711_SCK);
+  if (s_scale.is_ready()) {
+    s_scale.set_scale(HX711_CAL_FACTOR);
+    s_scale.tare();
+    s_scaleReady = true;
+  } else {
+    s_scaleReady = false;
+  }
+}
+
+bool scaleIsReady() {
+  return s_scaleReady && s_scale.is_ready();
+}
+
+float scaleReadGrams() {
+  if (!scaleIsReady()) return 0.0f;
+  return s_scale.get_units(5);
 }
 
 // =======================================================================

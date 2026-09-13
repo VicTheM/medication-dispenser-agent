@@ -9,6 +9,11 @@ float ultrasonicReadCM(); // -1 if no echo / out of range
 void beamInit();
 bool beamObstacleDetected(); // true = beam blocked (door closed / obstacle present)
 
+// ---- HX711 load cell (picking tray) ----
+void scaleInit();
+bool scaleIsReady();
+float scaleReadGrams(); // averaged reading; call sparingly, takes a few ms
+
 // ---- Carousel stepper (28BYJ-48 + ULN2003) ----
 void carouselInit();
 void carouselTick();                 // call every loop() iteration - non-blocking

@@ -9,11 +9,19 @@
 #include "indicators.h"
 #include "sensors.h"
 #include "camlink.h"
-#include "netlink.h"
+#include "network.h"
 #include "webportal.h"
 #include "button.h"
 #include <ArduinoJson.h>
+#include <WiFi.h>
+#include <stdarg.h>
 #include <time.h>
+
+volatile bool DRAM_ATTR s_btnPressPending = false;
+
+void IRAM_ATTR buttonISR() {
+  s_btnPressPending = true;
+}
 
 // ---- Globals ----
 static DeviceState s_state = DeviceState::BOOT;
@@ -34,6 +42,8 @@ static uint8_t s_offlineTelemetryCount = 0;
 
 // ---- Forward declarations ----
 void enterState(DeviceState s);
+const char *stateName(DeviceState s);
+void logEvent(const char *fmt, ...);
 void onScheduleUpdate(CompartmentSlot slots[NUM_COMPARTMENTS], const String &tz);
 void onRemoteCommand(const String &type, const String &commandId, const String &payloadJson);
 void reportDispense(uint8_t compIdx, const char *status, bool wasOffline);
@@ -44,12 +54,40 @@ String compartmentLetter(uint8_t idx);
 bool isScheduleDueNow(const CompartmentSlot &slot);
 
 // =======================================================================
+// Logging - timestamped, single place so it's easy to redirect/extend later
+// =======================================================================
+void logEvent(const char *fmt, ...) {
+  char buf[176];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  unsigned long t = millis();
+  Serial.printf("[%lu.%03lu] %s\n", t / 1000, t % 1000, buf);
+}
+
+const char *stateName(DeviceState s) {
+  switch (s) {
+    case DeviceState::BOOT: return "BOOT";
+    case DeviceState::WIFI_CONNECTING: return "WIFI_CONNECTING";
+    case DeviceState::CONFIG_PORTAL: return "CONFIG_PORTAL";
+    case DeviceState::NORMAL: return "NORMAL";
+    case DeviceState::ALERTING: return "ALERTING";
+    case DeviceState::DISPENSING: return "DISPENSING";
+    case DeviceState::MONITOR_PICKUP: return "MONITOR_PICKUP";
+    case DeviceState::REPORTING: return "REPORTING";
+    case DeviceState::VOICE_QUERY: return "VOICE_QUERY";
+  }
+  return "?";
+}
+
+// =======================================================================
 // Setup
 // =======================================================================
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\nMedAdhere main controller booting...");
+  logEvent("MedAdhere main controller booting...");
 
   storageInit();
   displayInit();
@@ -57,19 +95,32 @@ void setup() {
   buttonInit();
   ultrasonicInit();
   beamInit();
+  scaleInit();
   carouselInit();
   camlinkInit();
 
   displayMessage("MedAdhere", "Booting...");
 
   s_creds = storageLoad();
+  logEvent("Loaded config: ssid=%s api=%s device=%s utc_offset=%d valid=%d",
+           s_creds.wifiSsid.c_str(), s_creds.apiBase.c_str(), s_creds.deviceUid.c_str(),
+           s_creds.utcOffsetHours, s_creds.valid);
+
+  // Hand the CAM board its own copy of the config the moment we start, so
+  // it can connect to WiFi and be ready independently of the main board's
+  // own connection timing.
+  // camSendConfig(s_creds.wifiSsid, s_creds.wifiPass, s_creds.apiBase,
+  //               s_creds.deviceUid, s_creds.deviceSecret, s_creds.utcOffsetHours);
+  // logEvent("Pushed config to CAM board");
 
   if (!s_creds.valid) {
+    logEvent("No valid WiFi/device config - entering config portal");
     enterState(DeviceState::CONFIG_PORTAL);
-    return;
+    // return;
   }
-
-  enterState(DeviceState::WIFI_CONNECTING);
+  else {
+    enterState(DeviceState::WIFI_CONNECTING);
+  }
 }
 
 // =======================================================================
@@ -84,16 +135,8 @@ void loop() {
   if (wifiIsConnected()) wsLoop();
 
   ButtonEvent btn = buttonTick();
-
-  if (btn == ButtonEvent::FACTORY_RESET) {
-    // works from any state - button hold overrides whatever we were doing
-    Serial.println("[button] factory reset triggered - wiping NVS");
-    displayMessage("Factory reset", "Erasing...");
-    indicatorsSetPattern(IndicatorPattern::CONFIG_MODE);
-    storageClearAll();
-    delay(1200);
-    ESP.restart();
-  }
+  if (btn == ButtonEvent::SHORT_PRESS) logEvent("Button: short press");
+  if (btn == ButtonEvent::LONG_PRESS) logEvent("Button: long press");
 
   switch (s_state) {
     case DeviceState::BOOT:
@@ -101,20 +144,32 @@ void loop() {
 
     case DeviceState::WIFI_CONNECTING: {
       displayMessage("Connecting", "to Wi-Fi...");
+      logEvent("Connecting to WiFi '%s'...", s_creds.wifiSsid.c_str());
       bool ok = wifiConnect(s_creds.wifiSsid, s_creds.wifiPass, WIFI_CONNECT_TIMEOUT_MS);
       if (!ok) {
+        logEvent("WiFi connect FAILED, retrying");
         displayMessage("Wi-Fi failed", "Hold btn=setup");
-        indicatorsSetPattern(IndicatorPattern::OFFLINE);
+        indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
         delay(3000);
         enterState(DeviceState::WIFI_CONNECTING); // keep retrying
         break;
       }
-      configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      logEvent("WiFi connected, IP=%s", WiFi.localIP().toString().c_str());
+
+      // UTC offset comes from the config portal (see item 1 in the brief) -
+      // schedule times are the patient's local wall-clock, so the device's
+      // "local time" needs to match that, not raw UTC.
+      configTime(s_creds.utcOffsetHours * 3600, 0, "pool.ntp.org", "time.nist.gov");
+      logEvent("Time sync requested, UTC offset = %d hours", s_creds.utcOffsetHours);
+
       networkSetIdentity(s_creds.apiBase, s_creds.deviceUid, s_creds.deviceSecret);
 
       String tz;
       if (fetchSchedule(s_schedule, tz)) {
         s_timezone = tz;
+        logEvent("Schedule fetched OK (backend timezone label: %s)", tz.c_str());
+      } else {
+        logEvent("Schedule fetch FAILED - will rely on WS push");
       }
       wsBegin(onScheduleUpdate, onRemoteCommand);
       enterState(DeviceState::NORMAL);
@@ -126,17 +181,11 @@ void loop() {
         webportalStart();
         indicatorsSetPattern(IndicatorPattern::CONFIG_MODE);
         displayMessage("Setup mode", "Connect to AP");
+        logEvent("Config portal started");
       }
       webportalLoop();
-      if (webportalSaveCompleted()) {
-        webportalStop();
-        s_creds = storageLoad();
-        displayMessage("Saved", "Connecting...");
-        enterState(s_creds.valid ? DeviceState::WIFI_CONNECTING : DeviceState::CONFIG_PORTAL);
-        break;
-      }
       if (!webportalIsActive()) {
-        // idle-timed-out out of config mode - fall back to whatever creds we have
+        logEvent("Config portal closed (idle timeout)");
         s_creds = storageLoad();
         enterState(s_creds.valid ? DeviceState::WIFI_CONNECTING : DeviceState::CONFIG_PORTAL);
       }
@@ -160,13 +209,13 @@ void loop() {
       int nextIdx; unsigned long secsUntil;
       findNextDue(nextIdx, secsUntil);
       if (nextIdx >= 0) {
-        unsigned long mins = secsUntil / 60;
         String line1 = "Next @ " + String(s_schedule[nextIdx].dispenseTime);
         String line2 = String(s_schedule[nextIdx].medicationNames);
         displayShowIdle(line1, line2);
 
         if (secsUntil == 0) {
           s_activeCompartment = nextIdx;
+          logEvent("Dose due now: compartment %s", compartmentLetter(nextIdx).c_str());
           enterState(DeviceState::ALERTING);
         }
       } else {
@@ -183,81 +232,107 @@ void loop() {
     }
 
     case DeviceState::ALERTING: {
-      // Start the active-low alarm before checking for the person.
-      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
       float dist = ultrasonicReadCM();
+      logEvent("Current Distance: (%.0f cm)", dist);
       bool approached = (dist > 0 && dist <= APPROACH_RANGE_CM);
 
       if (approached) {
-        displayMessage("Person detected", "Dispensing...");
+        logEvent("Person approached (%.0f cm) - dispensing compartment %s",
+                 dist, compartmentLetter(s_activeCompartment).c_str());
+        indicatorsSetPattern(IndicatorPattern::PERSON_APPROACHED); // "changes the sound"
+        displayMessage("Welcome!", "Dispensing...");
+        delay(600); // brief, deliberate pause so the sound-change is perceptible before dispensing
         enterState(DeviceState::DISPENSING);
         break;
       }
 
+      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
       String label = "Compartment " + compartmentLetter(s_activeCompartment);
       displayShowIdle("Time for meds!", label);
+
+      if (millis() - s_stateEnteredAt > ALERT_MAX_WAIT_MS) {
+        logEvent("Gave up waiting for approach - marking compartment %s skipped",
+                 compartmentLetter(s_activeCompartment).c_str());
+        indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
+        reportDispense(s_activeCompartment, "skipped", !wifiIsConnected());
+        enterState(DeviceState::NORMAL);
+      }
       break;
     }
 
     case DeviceState::DISPENSING: {
-      static bool s_carouselCmdSent = false;
-
-      if (!s_carouselCmdSent) {
-        carouselGoTo(s_activeCompartment);
-        s_carouselCmdSent = true;
-      }
-      // The alarm remains active while the medication is being dispensed.
-      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
+      indicatorsSetPattern(IndicatorPattern::DISPENSING);
       displayMessage("Dispensing", compartmentLetter(s_activeCompartment));
+      if (!carouselIsMoving() && millis() - s_stateEnteredAt < 50) {
+        carouselGoTo(s_activeCompartment);
+      }
 
-      if (s_carouselCmdSent && !carouselIsMoving() && millis() - s_stateEnteredAt > 300) {
-        s_carouselCmdSent = false; // ready for the next dispense
+      if (!carouselIsMoving() && millis() - s_stateEnteredAt > 300) {
+        logEvent("Dispensed compartment %s", compartmentLetter(s_activeCompartment).c_str());
         reportDispense(s_activeCompartment, "success", !wifiIsConnected());
-        camSendControl('V', ADHERENCE_VIDEO_MS);
-        displayMessage("Open door", "and pick it");
+        camTriggerVideo();
+        logEvent("Triggered CAM board video/adherence task");
         enterState(DeviceState::MONITOR_PICKUP);
       }
       break;
     }
 
     case DeviceState::MONITOR_PICKUP: {
+      static float baselineWeight = 0;
+      static bool baselineTaken = false;
       static bool doorOpened = false;
-      static unsigned long s_lastEnteredAt = 0;
-      if (s_lastEnteredAt != s_stateEnteredAt) {
-        doorOpened = false; // fresh entry into this state - reset for the new dose
-        s_lastEnteredAt = s_stateEnteredAt;
+
+      if (!baselineTaken) {
+        baselineWeight = scaleReadGrams();
+        baselineTaken = true;
+        doorOpened = false;
       }
 
       if (beamObstacleDetected() == false) doorOpened = true; // door out of the way at least once
-
       if (doorOpened) {
-        indicatorsSetPattern(IndicatorPattern::PICKUP_OK); // stops the alarm
+        logEvent("DOOR OPENED");
+      }
+      else {
+        logEvent("DOOR STILL CLOSED");
+      }
+
+      float now_g = scaleReadGrams();
+      bool weightChanged = fabs(now_g - baselineWeight) >= TRAY_PICKUP_DELTA_G;
+      bool pickedUp = doorOpened;
+      
+
+      if (pickedUp) {
+        logEvent("Pickup confirmed (door opened + weight changed by %.1fg)", now_g - baselineWeight);
+        indicatorsSetPattern(IndicatorPattern::PICKUP_OK);
         displayMessage("Great job!", "Medication taken");
+        baselineTaken = false;
         enterState(DeviceState::REPORTING);
         break;
       }
 
-      // Keep the active-low alarm sounding until the door is opened.
-      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
-      displayMessage("Open door", "and pick it");
+      if (millis() - s_stateEnteredAt > PICKUP_MONITOR_MS) {
+        logEvent("Pickup NOT confirmed within %lus - alarming", PICKUP_MONITOR_MS / 1000);
+        indicatorsSetPattern(IndicatorPattern::PICKUP_MISSED);
+        displayMessage("Not picked up", "Check on patient");
+        baselineTaken = false;
+        enterState(DeviceState::REPORTING);
+      }
       break;
     }
 
     case DeviceState::REPORTING: {
-      // Wait for the adherence clip the CAM board started recording back in
-      // DISPENSING, then relay it straight through to the backend.
-      char type, subType;
-      uint32_t len;
-      displayMessage("Uploading", "adherence clip");
-
-      if (camWaitForFrameHeader(type, subType, len, ADHERENCE_VIDEO_MS + 20000UL)) {
-        if (type == 'D' && subType == 'V' && len > 0) {
-          uploadAdherenceVideoFromSerial2(s_lastDispenseEventId, len, ADHERENCE_VIDEO_MS / 1000);
-        }
+      // The CAM board is already recording/uploading the adherence capture
+      // (triggered back in DISPENSING) - just wait for its pass/fail result.
+      displayMessage("Confirming", "adherence...");
+      bool ok = camWaitForResult(VIDEO_TIMEOUT_MS);
+      if (ok) {
+        logEvent("CAM board reported adherence capture OK");
       } else {
-        Serial.println("[state] no video frame arrived from CAM board in time");
+        logEvent("CAM board reported adherence capture FAILED or timed out");
+        indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
+        displayMessage("Video capture", "failed");
+        delay(1200);
       }
-
       enterState(DeviceState::NORMAL);
       break;
     }
@@ -274,13 +349,14 @@ void loop() {
 // Helpers
 // =======================================================================
 void enterState(DeviceState s) {
+  if (s != s_state) logEvent("State: %s -> %s", stateName(s_state), stateName(s));
   s_state = s;
   s_stateEnteredAt = millis();
 }
 
 String compartmentLetter(uint8_t idx) {
   if (idx >= NUM_COMPARTMENTS) return "?";
-  char letters[] = "ABCDEFGH";
+  char letters[] = "ABCDEFG";
   return String(letters[idx]);
 }
 
@@ -347,12 +423,15 @@ void reportDispense(uint8_t compIdx, const char *status, bool wasOffline) {
   char letter = compartmentLetter(compIdx)[0];
 
   if (wasOffline) {
+    logEvent("Offline - caching dispense event (%c, %s)", letter, status);
     if (s_offlineEventCount < OFFLINE_CACHE_MAX_EVENTS) {
       CachedDispenseEvent &e = s_offlineEvents[s_offlineEventCount++];
       e.compartment = letter;
       strlcpy(e.status, status, sizeof(e.status));
       strlcpy(e.scheduledTime, s_schedule[compIdx].dispenseTime, sizeof(e.scheduledTime));
       e.dispensedAt = now;
+    } else {
+      logEvent("WARNING: offline event cache full, dropping event (%c, %s)", letter, status);
     }
     return;
   }
@@ -360,9 +439,11 @@ void reportDispense(uint8_t compIdx, const char *status, bool wasOffline) {
   String eventId;
   bool ok = postDispenseEvent(letter, status, s_schedule[compIdx].dispenseTime, now, false, eventId);
   if (ok) {
+    logEvent("Dispense event reported OK (id=%s)", eventId.c_str());
     s_lastDispenseEventId = eventId;
   } else {
-    // fall back to the offline cache so it isn't lost
+    logEvent("Dispense event report FAILED - falling back to offline cache");
+    indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
     if (s_offlineEventCount < OFFLINE_CACHE_MAX_EVENTS) {
       CachedDispenseEvent &e = s_offlineEvents[s_offlineEventCount++];
       e.compartment = letter;
@@ -379,6 +460,7 @@ void sendTelemetryNow() {
   uint32_t uptime = millis() / 1000;
 
   if (!wifiIsConnected()) {
+    logEvent("Offline - caching telemetry");
     if (s_offlineTelemetryCount < OFFLINE_CACHE_MAX_TELEMETRY) {
       CachedTelemetry &t = s_offlineTelemetry[s_offlineTelemetryCount++];
       t.reportedAt = time(nullptr);
@@ -387,40 +469,48 @@ void sendTelemetryNow() {
       t.personDetected = person;
       t.wifiRssi = 0;
       t.uptimeSeconds = uptime;
+    } else {
+      logEvent("WARNING: offline telemetry cache full, dropping reading");
     }
     return;
   }
 
   bool ok = postTelemetry(s_batteryPct, tray, person, uptime);
+  logEvent("Telemetry sent: %s (battery %.0f%%)", ok ? "OK" : "FAILED", s_batteryPct);
+  if (!ok) indicatorsSetPattern(IndicatorPattern::OFFLINE);
+
   if (ok && s_offlineEventCount + s_offlineTelemetryCount > 0) {
-    postSyncOfflineBatch(s_offlineEvents, s_offlineEventCount, s_offlineTelemetry, s_offlineTelemetryCount);
-    s_offlineEventCount = 0;
-    s_offlineTelemetryCount = 0;
+    logEvent("Flushing offline cache: %u events, %u telemetry", s_offlineEventCount, s_offlineTelemetryCount);
+    if (postSyncOfflineBatch(s_offlineEvents, s_offlineEventCount, s_offlineTelemetry, s_offlineTelemetryCount)) {
+      s_offlineEventCount = 0;
+      s_offlineTelemetryCount = 0;
+    } else {
+      logEvent("Offline cache flush FAILED - will retry next telemetry cycle");
+    }
   }
 }
 
 void onScheduleUpdate(CompartmentSlot slots[NUM_COMPARTMENTS], const String &tz) {
   for (int i = 0; i < NUM_COMPARTMENTS; i++) s_schedule[i] = slots[i];
   s_timezone = tz;
-  Serial.println("[state] schedule updated");
+  logEvent("Schedule updated via WebSocket push");
 }
 
 void onRemoteCommand(const String &type, const String &commandId, const String &payloadJson) {
-  Serial.printf("[state] remote command: %s\n", type.c_str());
+  logEvent("Remote command received: %s", type.c_str());
 
   if (type == "manual_dispense") {
     StaticJsonDocument<128> doc;
     deserializeJson(doc, payloadJson);
     const char *compStr = doc["compartment"] | "A";
-    char c = toupper(compStr[0]);
-    uint8_t idx = c - 'A';
+    uint8_t idx = compStr[0] - 'A';
     if (idx < NUM_COMPARTMENTS) {
       s_activeCompartment = idx;
       enterState(DeviceState::DISPENSING);
-    } else {
-      Serial.printf("[cmd] manual_dispense: invalid compartment '%s'\n", compStr);
     }
   } else if (type == "restart") {
+    logEvent("Remote restart requested - rebooting");
+    delay(200); // let the log line actually get flushed out over Serial first
     ESP.restart();
   } else if (type == "sync") {
     sendTelemetryNow(); // opportunistically flushes the offline cache too
@@ -430,54 +520,19 @@ void onRemoteCommand(const String &type, const String &commandId, const String &
 }
 
 void runVoiceQuery() {
+  logEvent("Voice query requested (long press) - triggering CAM board");
   displayMessage("Listening...", "Ask your question");
-  camSendControl('L', VOICE_MAX_RECORD_MS);
+  camTriggerAudio();
 
-  char type, subType;
-  uint32_t len;
-  if (!camWaitForFrameHeader(type, subType, len, VOICE_MAX_RECORD_MS + 5000UL) || type != 'D' || subType != 'A') {
-    displayMessage("No question", "heard - sorry");
+  bool ok = camWaitForResult(AUDIO_TIMEOUT_MS);
+  if (ok) {
+    logEvent("CAM board reported voice query OK");
+    displayMessage("All done!", "");
+    indicatorsSetPattern(IndicatorPattern::PICKUP_OK); // reuse the success chime/flash
+  } else {
+    logEvent("CAM board reported voice query FAILED or timed out");
+    displayMessage("Sorry, that", "didn't work");
     indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
-    delay(1500);
-    return;
   }
-
-  uint8_t *audioBuf = (uint8_t *)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-  if (!audioBuf) audioBuf = (uint8_t *)malloc(len);
-  if (!audioBuf) {
-    displayMessage("Out of memory", "try again");
-    return;
-  }
-
-  size_t got = 0;
-  unsigned long start = millis();
-  while (got < len && millis() - start < 15000) {
-    if (Serial2.available()) {
-      got += Serial2.readBytes(audioBuf + got, len - got);
-    } else {
-      delay(1);
-    }
-  }
-  camConsumeTrailingChecksum();
-
-  displayMessage("Thinking...", "");
-  String transcript, answer, interactionId, audioFormat;
-  bool ok = postVoiceQuery(audioBuf, got, "wav", transcript, answer, interactionId, audioFormat);
-  free(audioBuf);
-
-  if (!ok) {
-    displayMessage("Couldn't reach", "the assistant");
-    indicatorsSetPattern(IndicatorPattern::ERROR_PATTERN);
-    delay(1500);
-    return;
-  }
-
-  displayMessage("Got answer:", answer.substring(0, LCD_COLS));
-
-  uint8_t *respBuf; uint32_t respLen;
-  if (downloadVoiceAudio(interactionId, &respBuf, &respLen)) {
-    camSendPlaybackAudio(respBuf, respLen);
-    free(respBuf);
-  }
-  delay(2000);
+  delay(1500);
 }

@@ -6,7 +6,6 @@
 
 static WebServer s_server(80);
 static bool s_active = false;
-static bool s_saveCompleted = false;
 static unsigned long s_lastRequestMs = 0;
 
 static const char PAGE_FORM[] PROGMEM = R"HTML(
@@ -25,6 +24,7 @@ p.hint{color:#666;font-size:13px}</style></head><body>
 <label>API base URL</label><input name="api_base" value="%API_BASE%">
 <label>Device ID</label><input name="device_uid" value="%DEVICE_UID%">
 <label>Device Secret</label><input name="device_secret" value="%DEVICE_SECRET%">
+<label>UTC offset (hours), e.g. 1 for GMT+1</label><input name="utc_offset" value="%UTC_OFFSET%" type="number" step="1">
 <label>New setup-network password (optional)</label><input name="ap_pass" type="password" placeholder="leave blank to keep current">
 <button type="submit">Save &amp; Restart</button>
 </form></body></html>
@@ -41,6 +41,7 @@ static void handleRoot() {
   html.replace("%API_BASE%", c.apiBase);
   html.replace("%DEVICE_UID%", c.deviceUid);
   html.replace("%DEVICE_SECRET%", c.deviceSecret);
+  html.replace("%UTC_OFFSET%", String(c.utcOffsetHours));
   s_server.send(200, "text/html", html);
 }
 
@@ -52,14 +53,17 @@ static void handleSave() {
   String deviceUid = s_server.arg("device_uid");
   String deviceSecret = s_server.arg("device_secret");
   String apPass = s_server.arg("ap_pass");
+  String utcOffsetStr = s_server.arg("utc_offset");
 
   if (ssid.length() > 0) storageSaveWifi(ssid, pass);
   if (apiBase.length() > 0) storageSaveApiBase(apiBase);
   if (deviceUid.length() > 0 && deviceSecret.length() > 0) storageSaveDeviceCreds(deviceUid, deviceSecret);
   if (apPass.length() >= 8) storageSaveApPassword(apPass);
+  if (utcOffsetStr.length() > 0) storageSaveUtcOffset(utcOffsetStr.toInt());
 
   s_server.send(200, "text/html", FPSTR(PAGE_SAVED));
-  s_saveCompleted = true;
+  delay(1500);
+  ESP.restart();
 }
 
 void webportalStart() {
@@ -79,7 +83,6 @@ void webportalStart() {
   s_server.begin();
 
   s_active = true;
-  s_saveCompleted = false;
   s_lastRequestMs = millis();
 
   Serial.printf("[portal] AP '%s' started, password required, config at http://%s/\n",
@@ -103,10 +106,4 @@ void webportalStop() {
 
 bool webportalIsActive() {
   return s_active;
-}
-
-bool webportalSaveCompleted() {
-  if (!s_saveCompleted) return false;
-  s_saveCompleted = false;
-  return true;
 }
