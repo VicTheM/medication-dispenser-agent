@@ -24,7 +24,7 @@
 #define PIN_TRIG          7
 #define PIN_ECHO          15
 #define SOUND_SPEED_CM_US 0.0343f
-#define APPROACH_RANGE_CM 200.0f   // "within range" threshold from the brief
+#define APPROACH_RANGE_CM 70.0f    // person is considered present below 70 cm
 
 // ---------------------------------------------------------------------
 // Carousel stepper (28BYJ-48 + ULN2003) - selects which compartment
@@ -68,14 +68,6 @@
 #define PIN_IR_BEAM       38
 
 // ---------------------------------------------------------------------
-// HX711 + load cell (picking tray)
-// ---------------------------------------------------------------------
-#define PIN_HX711_DOUT    39
-#define PIN_HX711_SCK     40
-#define HX711_CAL_FACTOR  -7050.0f   // MUST be recalibrated per unit - see brief
-#define TRAY_PICKUP_DELTA_G 2.0f     // grams of change that counts as "picked up"
-
-// ---------------------------------------------------------------------
 // Serial2 link to the ESP32-CAM (Ai Thinker) board
 // ---------------------------------------------------------------------
 #define PIN_CAM_RX        17   // wire to CAM board's TX
@@ -86,8 +78,7 @@
 // Timing
 // ---------------------------------------------------------------------
 #define TELEMETRY_INTERVAL_MS      3000UL                   // 3s
-#define ALERT_MAX_WAIT_MS          (5UL * 60UL * 1000UL)   // give up ringing after 5 min
-#define PICKUP_MONITOR_MS          (2UL * 60UL * 1000UL)   // watch for pickup for 2 min
+#define PICKUP_MONITOR_MS          (1UL * 60UL * 1000UL)   // watch for pickup for 1 min
 #define ADHERENCE_VIDEO_MS         (10UL * 1000UL)        // 10 secs
 #define WIFI_CONNECT_TIMEOUT_MS    20000UL
 #define WS_RECONNECT_INTERVAL_MS   5000UL

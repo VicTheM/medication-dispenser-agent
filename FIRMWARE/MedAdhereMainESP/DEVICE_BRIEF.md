@@ -15,9 +15,9 @@
 ## Normal operation
 LCD shows **time to next dose** and its medication names most of the time — that's the default screen.
 
-**At dispense time**: buzzer starts a slow low beep, blue LED pulses, LCD shows "Time for meds!" — this continues until the ultrasonic sensor detects someone within 200cm. The instant that happens, the tone changes (faster, higher pitch) and green LED takes over, then the carousel rotates the right compartment into position and drops the dose.
+**At dispense time**: buzzer starts a slow low beep, blue LED pulses, LCD shows "Time for meds!" — this continues until the ultrasonic sensor detects someone within 70cm. The carousel then rotates the right compartment into position and drops the dose without requiring the door to be opened first. The alarm continues while dispensing and until the person opens the door.
 
-**After dispensing**: the device watches the tray's IR beam (normally blocked by the closed tray door) and the load cell weight together. Pickup is confirmed only when *both* the door has opened (beam unblocked at least once) *and* the tray weight has changed meaningfully — using either alone is unreliable (someone could jostle the unit without opening the door, or open the door without actually taking the dose). Confirmed pickup gets a short double-chime + green flash; no pickup within 5 minutes gets a slow triple-beep + red flash and is logged (surfaced to the caregiver via telemetry) but the dose itself is still reported as dispensed — the adherence video is the actual proof of whether it was taken, this sensor pair is a fast local signal, not the source of truth.
+**After dispensing**: the LCD asks the person to open the door and pick up the medication. The device watches the tray's IR beam (normally blocked by the closed tray door), keeps the alarm sounding, and stops the alarm once the beam is unblocked. The dose is then reported as picked up; the adherence video is the actual proof of whether it was taken.
 
 **The button**:
 - **Long-press** (~1s+): ask the assistant a question out loud. LCD prompts "Listening...", the CAM board records, gets sent to the AI, and the spoken answer plays back through the CAM's speaker.
@@ -36,11 +36,8 @@ LCD shows **time to next dose** and its medication names most of the time — th
 
 **Video/voice relay blocks the main loop** for the duration of the transfer (bounded, but real — could be tens of seconds). This happens only during the REPORTING and VOICE_QUERY states, where nothing else time-critical needs the CPU, and WS reconnects automatically afterward if it dropped. The clean fix is running networking on its own FreeRTOS task (ESP32 is dual-core) — flagged here as the natural v2 improvement, not done in v1 to keep the design comprehensible.
 
-**HX711 calibration factor** (`HX711_CAL_FACTOR` in `config.h`) is a placeholder — every physical unit needs its own, using known weights against `get_units()`.
-
 ## Things you didn't mention that I added
 1. **The home sensor** above.
 2. **Baud rate bump to 921600** — 115200 would make a multi-MB adherence clip take minutes just to cross the wire between boards.
-3. **"Skipped" status** — if nobody approaches within 5 minutes of the alert starting, the firmware gives up, logs the dose as `skipped`, and returns to idle rather than ringing forever.
-4. **NTP time sync** on boot (`configTime()`) — the schedule engine needs real wall-clock time to know when "now" is.
-5. **Per-day dispense de-duplication** (`dispensedToday` flag, reset implicitly by the next schedule refresh) so the same minute-match doesn't fire the dose twice.
+3. **NTP time sync** on boot (`configTime()`) — the schedule engine needs real wall-clock time to know when "now" is.
+4. **Per-day dispense de-duplication** (`dispensedToday` flag, reset implicitly by the next schedule refresh) so the same minute-match doesn't fire the dose twice.

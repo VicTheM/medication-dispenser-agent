@@ -132,7 +132,7 @@ void setup() {
 
   // Buzzer
   pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(BUZZER_PIN, HIGH);
 
   // Button + interrupt (default pull-up, active LOW)
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -252,9 +252,9 @@ void testBuzzer() {
   printToLCD("Buzzer Test", "Beeping...");
 
   for (int i = 0; i < 5; i++) {
-    tone(BUZZER_PIN, 2000);   // 2kHz beep
+    digitalWrite(BUZZER_PIN, LOW);
     delay(150);
-    noTone(BUZZER_PIN);
+    digitalWrite(BUZZER_PIN, HIGH);
     delay(150);
   }
 }
@@ -265,8 +265,9 @@ void checkButton() {
     buttonFlag = false; // clear flag
     Serial.println("[Button] Pressed! (interrupt triggered)");
     printToLCD("Button Pressed!", "Interrupt OK");
-    tone(BUZZER_PIN, 1500, 100); // quick confirmation beep
+    digitalWrite(BUZZER_PIN, LOW);
     delay(1000);
+    digitalWrite(BUZZER_PIN, HIGH);
   }
 }
 
