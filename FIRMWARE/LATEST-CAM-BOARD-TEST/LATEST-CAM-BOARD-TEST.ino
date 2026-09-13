@@ -15,6 +15,19 @@
   EVERYTHING IS TRIGGERED BY SERIAL COMMANDS. Nothing records or sends
   automatically at boot -- type 'h' after boot for the menu.
 
+  MAIN BOARD LINK (new): this board's UART0 (Serial - the same pins used by
+  a USB-serial adapter during flashing) is wired to the main ESP32-S3's
+  Serial2 in normal operation. Two things happen over that wire - see the
+  "MAIN BOARD LINK" section further down for the full spec:
+    1. Once at boot, a CFGSTART/.../CFGEND text block hands over WiFi
+       credentials (and API base/device identity/UTC offset, captured for
+       later use) - overrides DEFAULT_WIFI_SSID/PASSWORD below.
+    2. 'a'/'v' sent as bare bytes trigger the audio/video task exactly like
+       typing them into the Serial Monitor does, and now ALSO write back a
+       single raw result byte when done: 0 = success, 1 = error.
+  Manual testing via the Arduino Serial Monitor still works exactly as
+  before for all six commands - the main board just automates 'a'/'v'.
+
   Commands:
     v  - Record 10s of video, buffer it, upload to VIDEO backend
     u  - Re-upload the last video clip without re-recording
@@ -63,11 +76,59 @@
 #include "esp_camera.h"
 #include "esp_heap_caps.h"
 
+// Forward declarations - this sandbox's bundled ctags mis-parses several
+// functions below when Arduino's build system tries to auto-generate
+// prototypes, so they're declared explicitly here instead (harmless and
+// good practice regardless of the toolchain quirk).
+void printMemStatus(const char* tag);
+void printWiFiStatus();
+void printHelp();
+void connectWiFi();
+bool initCamera();
+void setupI2SSpeaker();
+void i2sWriteMonoBlock(const int16_t *mono, size_t count);
+bool playPCMFile(const char *path);
+bool playAudioBuffer(const int16_t *buffer, size_t numSamples);
+bool recordFromMic(int16_t *buffer, size_t numSamples, uint32_t sampleRate);
+void sendUint32BE(WiFiClient& client, uint32_t value);
+void freeVideoBuffer();
+bool allocateVideoBuffer();
+void captureVideoClip();
+bool uploadVideoClip();
+bool doVideoRecordAndUpload();
+bool sendAudioAndPlayResponse(const int16_t* buffer, size_t numSamples);
+bool doAudioRecordSendPlay();
+void applyReceivedConfig();
+void processConfigLine(const String &line);
+void processLine(const String &line);
+void runTriggeredTask(char cmd);
+void handleSerialByte(char c);
+void waitForMainBoardConfig(uint32_t windowMs);
+void setup();
+void loop();
+bool recvExact(WiFiClient& client, uint8_t* dest, size_t n, uint32_t timeoutMs);
+bool recvUint32BE(WiFiClient& client, uint32_t& value, uint32_t timeoutMs);
+
 // =====================================================================
-//  CONFIG -- EDIT THESE
+//  CONFIG -- EDIT THESE (used as fallback defaults for standalone testing;
+//  overridden at boot if the main ESP32-S3 board sends a config block -
+//  see "MAIN BOARD LINK" below)
 // =====================================================================
-const char* WIFI_SSID     = "iPhone";
-const char* WIFI_PASSWORD = "burnitup"; 
+const char* DEFAULT_WIFI_SSID     = "iPhone";
+const char* DEFAULT_WIFI_PASSWORD = "burnitup";
+
+// Populated from either the defaults above or a config block from the main
+// board (whichever is available first - see waitForMainBoardConfig()).
+String g_wifiSsid = DEFAULT_WIFI_SSID;
+String g_wifiPass = DEFAULT_WIFI_PASSWORD;
+// From the main board's config block - not currently used by the video/audio
+// backends below (which speak their own bespoke TCP protocol, not the
+// MedAdhere REST API), but captured and printed in case you wire that up
+// later.
+String g_apiBase = "";
+String g_deviceUid = "";
+String g_deviceSecret = "";
+int g_utcOffsetHours = 0;
 
 const char* VIDEO_BACKEND_HOST = "tokaido.proxy.rlwy.net";
 const uint16_t VIDEO_BACKEND_PORT = 18747;
@@ -163,9 +224,9 @@ void printWiFiStatus() {
 void printHelp() {
   Serial.println("==================================================");
   Serial.println("[MENU]");
-  Serial.println("  v - Record 10s video and upload");
-  Serial.println("  u - Re-upload last video clip (no re-record)");
-  Serial.println("  a - Record 5s audio, send, play response");
+  Serial.println("  v - Record 10s video and upload (writes back 0/1 result byte)");
+  Serial.println("  u - Re-upload last video clip (no re-record, no result byte)");
+  Serial.println("  a - Record 5s audio, send, play response (writes back 0/1 result byte)");
   Serial.println("  p - Play startup.pcm from LittleFS");
   Serial.println("  s - Show status (WiFi/memory/buffers)");
   Serial.println("  h - Show this menu");
@@ -176,9 +237,9 @@ void printHelp() {
 //  WI-FI
 // =====================================================================
 void connectWiFi() {
-  Serial.println("[WiFi] Starting connection...");
+  Serial.printf("[WiFi] Starting connection to '%s'...\n", g_wifiSsid.c_str());
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(g_wifiSsid.c_str(), g_wifiPass.c_str());
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
     delay(300);
@@ -356,7 +417,7 @@ void sendUint32BE(WiFiClient& client, uint32_t value) {
   client.write(buf, 4);
 }
 
-bool recvExact(WiFiClient& client, uint8_t* dest, size_t n, uint32_t timeoutMs = 15000) {
+bool recvExact(WiFiClient& client, uint8_t* dest, size_t n, uint32_t timeoutMs) {
   size_t got = 0;
   uint32_t start = millis();
   while (got < n) {
@@ -377,7 +438,7 @@ bool recvExact(WiFiClient& client, uint8_t* dest, size_t n, uint32_t timeoutMs =
   return true;
 }
 
-bool recvUint32BE(WiFiClient& client, uint32_t& value, uint32_t timeoutMs = 15000) {
+bool recvUint32BE(WiFiClient& client, uint32_t& value, uint32_t timeoutMs) {
   uint8_t buf[4];
   if (!recvExact(client, buf, 4, timeoutMs)) return false;
   value = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
@@ -552,7 +613,7 @@ bool uploadVideoClip() {
   return false;
 }
 
-void doVideoRecordAndUpload() {
+bool doVideoRecordAndUpload() {
   Serial.println("==================================================");
   Serial.println("[VIDEO] Starting record+upload sequence");
   printMemStatus("video-start");
@@ -560,14 +621,16 @@ void doVideoRecordAndUpload() {
   freeVideoBuffer();
   if (!allocateVideoBuffer()) {
     Serial.println("[VIDEO] Aborting: buffer allocation failed.");
-    return;
+    Serial.println("==================================================");
+    return false;
   }
   captureVideoClip();
   printMemStatus("video-after-capture");
-  uploadVideoClip();
+  bool uploaded = uploadVideoClip();
   printMemStatus("video-end");
   Serial.println("[VIDEO] Sequence done.");
   Serial.println("==================================================");
+  return uploaded;
 }
 
 // =====================================================================
@@ -671,14 +734,15 @@ bool sendAudioAndPlayResponse(const int16_t* buffer, size_t numSamples) {
   return false;
 }
 
-void doAudioRecordSendPlay() {
+bool doAudioRecordSendPlay() {
   Serial.println("==================================================");
   Serial.println("[AUDIO] Starting record+send+respond sequence");
   printMemStatus("audio-start");
 
   if (audioRecordBuffer == nullptr) {
     Serial.println("[AUDIO] ERROR: record buffer not allocated (setup issue). Aborting.");
-    return;
+    Serial.println("==================================================");
+    return false;
   }
   if (!speakerReady) {
     Serial.println("[AUDIO] WARNING: speaker not ready, response won't be audible.");
@@ -686,10 +750,171 @@ void doAudioRecordSendPlay() {
 
   recordFromMic(audioRecordBuffer, AUDIO_RECORD_SAMPLES, AUDIO_SAMPLE_RATE);
   printMemStatus("audio-after-record");
-  sendAudioAndPlayResponse(audioRecordBuffer, AUDIO_RECORD_SAMPLES);
+  bool ok = sendAudioAndPlayResponse(audioRecordBuffer, AUDIO_RECORD_SAMPLES);
   printMemStatus("audio-end");
   Serial.println("[AUDIO] Sequence done.");
   Serial.println("==================================================");
+  return ok;
+}
+
+// =====================================================================
+//  MAIN BOARD LINK
+//  ----------------------------------------------------------------------
+//  The main ESP32-S3 board is wired to this board's UART0 (the same pins
+//  normally used by a USB-serial adapter during flashing/debugging - once
+//  deployed, that header goes to the main board instead of a PC). Two
+//  things travel over this one wire:
+//
+//  1. Once, right after boot: a plain-text config block -
+//       CFGSTART
+//       WIFI_SSID=...
+//       WIFI_PASS=...
+//       API_BASE=...
+//       DEVICE_UID=...
+//       DEVICE_SECRET=...
+//       UTC_OFFSET=<int>
+//       CFGEND
+//     which overrides the DEFAULT_WIFI_* fallbacks above.
+//
+//  2. At any time after that: single-byte task triggers - 'a' (audio) or
+//     'v' (video) - answered with a single raw result byte, 0 = success,
+//     1 = error (NOT the ASCII characters '0'/'1' - actual byte values).
+//
+//  The existing human-readable debug logging (Serial.print/printf) keeps
+//  going out over the same wire and is harmless to the main board's side
+//  of the protocol: it only ever treats a raw 0x00 or 0x01 byte as a
+//  result, and normal printable log text/newlines never produce those
+//  byte values, so the two purposes coexist fine on one connection.
+// =====================================================================
+static String s_lineBuf = "";
+static bool s_inConfigBlock = false;
+
+void applyReceivedConfig() {
+  Serial.printf("[CFG] Applying: ssid='%s' api='%s' device='%s' utc_offset=%d\n",
+                g_wifiSsid.c_str(), g_apiBase.c_str(), g_deviceUid.c_str(), g_utcOffsetHours);
+  WiFi.disconnect();
+  connectWiFi();
+}
+
+void processConfigLine(const String &line) {
+  int eq = line.indexOf('=');
+  if (eq <= 0) return;
+  String key = line.substring(0, eq);
+  String val = line.substring(eq + 1);
+
+  if (key == "WIFI_SSID") g_wifiSsid = val;
+  else if (key == "WIFI_PASS") g_wifiPass = val;
+  else if (key == "API_BASE") g_apiBase = val;
+  else if (key == "DEVICE_UID") g_deviceUid = val;
+  else if (key == "DEVICE_SECRET") g_deviceSecret = val;
+  else if (key == "UTC_OFFSET") g_utcOffsetHours = val.toInt();
+}
+
+// Processes one complete line (config markers/keys). Plain command letters
+// never reach here - they're dispatched immediately in handleSerialByte().
+void processLine(const String &line) {
+  if (line.length() == 0) return;
+
+  if (line == "CFGSTART") {
+    s_inConfigBlock = true;
+    Serial.println("[CFG] Receiving config from main board...");
+    return;
+  }
+  if (line == "CFGEND") {
+    s_inConfigBlock = false;
+    applyReceivedConfig();
+    return;
+  }
+  if (s_inConfigBlock) {
+    processConfigLine(line);
+    return;
+  }
+
+  Serial.printf("[CMD] Unrecognized line: '%s'\n", line.c_str());
+}
+
+// Runs one already-dispatched task and writes the raw 0/1 result byte the
+// main board is waiting for.
+void runTriggeredTask(char cmd) {
+  bool ok;
+  if (cmd == 'v' || cmd == 'V') {
+    ok = doVideoRecordAndUpload();
+  } else {
+    ok = doAudioRecordSendPlay();
+  }
+  Serial.write((uint8_t)(ok ? 0 : 1));
+  Serial.flush();
+  Serial.printf("[LINK] Task '%c' result byte sent: %d\n", cmd, ok ? 0 : 1);
+}
+
+// Single entry point for every byte arriving from the main board (or a
+// human typing into the Serial Monitor for manual testing - both work).
+void handleSerialByte(char c) {
+  // A fresh single-shot command character (only recognized when we're not
+  // already mid-way through buffering a config line) is dispatched
+  // immediately, exactly like the original menu did.
+  if (s_lineBuf.length() == 0 && !s_inConfigBlock) {
+    switch (c) {
+      case 'v': case 'V':
+      case 'a': case 'A':
+        runTriggeredTask(c);
+        return;
+      case 'u': case 'U':
+        Serial.println("[CMD] Re-upload requested.");
+        uploadVideoClip();
+        return;
+      case 'p': case 'P':
+        Serial.println("[CMD] Play startup clip requested.");
+        playPCMFile(STARTUP_FILE);
+        return;
+      case 's': case 'S':
+        Serial.println("[CMD] Status requested.");
+        printWiFiStatus();
+        printMemStatus("status");
+        Serial.printf("[STATUS] cameraReady=%d speakerReady=%d\n", cameraReady, speakerReady);
+        Serial.printf("[STATUS] hasBufferedVideo=%d videoRecordFrames=%u\n",
+                      hasBufferedVideo, videoRecordFrames);
+        return;
+      case 'h': case 'H': case '?':
+        printHelp();
+        return;
+      case '\n': case '\r':
+        return; // stray newline with nothing buffered - ignore
+      default:
+        break; // not a known command byte - fall through to line buffering
+               // (this is how "CFGSTART" etc. get accumulated below)
+    }
+  }
+
+  // Line buffering, used for the config block (and to report genuinely
+  // unrecognized input instead of erroring per-character).
+  if (c == '\n') {
+    processLine(s_lineBuf);
+    s_lineBuf = "";
+  } else if (c != '\r') {
+    s_lineBuf += c;
+    if (s_lineBuf.length() > 128) s_lineBuf = ""; // safety cap against garbage/noise
+  }
+}
+
+// Give the main board a short window to deliver its config block before we
+// make our own first WiFi connection attempt (handles either board
+// powering on first - if config arrives late instead, applyReceivedConfig()
+// still reconnects WiFi with the new credentials whenever it does show up).
+void waitForMainBoardConfig(uint32_t windowMs) {
+  Serial.printf("[CFG] Waiting up to %lu ms for config from main board...\n", (unsigned long)windowMs);
+  uint32_t start = millis();
+  while (millis() - start < windowMs) {
+    while (Serial.available()) {
+      handleSerialByte((char)Serial.read());
+    }
+    if (g_deviceUid.length() > 0) {
+      Serial.println("[CFG] Config received during boot window.");
+      return;
+    }
+    delay(10);
+  }
+  Serial.println("[CFG] No config received in time - using DEFAULT_WIFI_* for now.");
 }
 
 // =====================================================================
@@ -723,6 +948,7 @@ void setup() {
 
   setupI2SSpeaker();
 
+  waitForMainBoardConfig(4000); // see MAIN BOARD LINK section above
   connectWiFi();
 
   Serial.println("[BOOT] Allocating audio record buffer in PSRAM...");
@@ -741,45 +967,15 @@ void setup() {
 }
 
 // =====================================================================
-//  LOOP -- serial command dispatch
+//  LOOP -- drains all available serial bytes through the unified handler
+//  (single-shot command bytes from the main board, or a human typing into
+//  the Serial Monitor - both work identically)
 // =====================================================================
 void loop() {
-  if (Serial.available()) {
-    char c = Serial.read();
-    switch (c) {
-      case 'v': case 'V':
-        doVideoRecordAndUpload();
-        break;
-      case 'u': case 'U':
-        Serial.println("[CMD] Re-upload requested.");
-        uploadVideoClip();
-        break;
-      case 'a': case 'A':
-        doAudioRecordSendPlay();
-        break;
-      case 'p': case 'P':
-        Serial.println("[CMD] Play startup clip requested.");
-        playPCMFile(STARTUP_FILE);
-        break;
-      case 's': case 'S':
-        Serial.println("[CMD] Status requested.");
-        printWiFiStatus();
-        printMemStatus("status");
-        Serial.printf("[STATUS] cameraReady=%d speakerReady=%d\n", cameraReady, speakerReady);
-        Serial.printf("[STATUS] hasBufferedVideo=%d videoRecordFrames=%u\n",
-                      hasBufferedVideo, videoRecordFrames);
-        break;
-      case 'h': case 'H': case '?':
-        printHelp();
-        break;
-      case '\n': case '\r':
-        break; // ignore
-      default:
-        Serial.printf("[CMD] Unknown command '%c'. Type 'h' for help.\n", c);
-        break;
-    }
+  while (Serial.available()) {
+    handleSerialByte((char)Serial.read());
   }
-  delay(10);
+  delay(5);
 }
 
 /*
