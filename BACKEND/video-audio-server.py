@@ -149,7 +149,7 @@ def handle_video_connection(conn, addr):
             log("VIDEO", f"Writing to bucket at {out_path}")
             f.write(temp_vid.read())
 
-        resp = create_upload_record("audio", out_path)
+        resp = create_upload_record("video", out_path)
         log("VIDEO", f"Record written to DB. Id: {resp['id']}")
 
     elapsed = time.time() - t0
@@ -272,9 +272,9 @@ def generate_response(pcm_bytes, sample_rate, channels, bits):
         return pcm_bytes
 
 
-def create_upload_record(upload_type: str, path: str):
+def create_upload_record(upload_type:str, path:str):
     endpoint = f"{API_BASE_URL}/uploads/"
-    file_url = f"{S3_PUBLIC_ENDPOINT}/{path.removeprefix('medadhere/')}"
+    file_url = f"{S3_PUBLIC_ENDPOINT}/{path.removeprefix("medadhere/")}"
 
     payload = {"upload_type": upload_type, "url": file_url}
 

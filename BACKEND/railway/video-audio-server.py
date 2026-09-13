@@ -149,7 +149,7 @@ def handle_video_connection(conn, addr):
             log("VIDEO", f"Writing to bucket at {out_path}")
             f.write(temp_vid.read())
 
-        resp = create_upload_record("audio", out_path)
+        resp = create_upload_record("video", out_path)
         log("VIDEO", f"Record written to DB. Id: {resp['id']}")
 
     elapsed = time.time() - t0
