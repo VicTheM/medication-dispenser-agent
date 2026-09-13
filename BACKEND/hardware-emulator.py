@@ -26,7 +26,7 @@ Optional (for nicer output, gracefully skipped if missing):
     pip install sounddevice   # play the backend's audio response through your speakers
 
 Run:
-    python hardware_emulator.py --host 127.0.0.1
+    python hardware_emulator.py
 """
 
 import argparse

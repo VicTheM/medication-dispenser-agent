@@ -67,13 +67,13 @@
 //  CONFIG -- EDIT THESE
 // =====================================================================
 const char* WIFI_SSID     = "iPhone";
-const char* WIFI_PASSWORD = "burnitup";
+const char* WIFI_PASSWORD = "burnitup"; 
 
-const char* VIDEO_BACKEND_HOST = "172.20.10.2";
-const uint16_t VIDEO_BACKEND_PORT = 5001;
+const char* VIDEO_BACKEND_HOST = "tokaido.proxy.rlwy.net";
+const uint16_t VIDEO_BACKEND_PORT = 18747;
 
-const char* AUDIO_BACKEND_HOST = "172.20.10.2";
-const uint16_t AUDIO_BACKEND_PORT = 5002;
+const char* AUDIO_BACKEND_HOST = "maglev.proxy.rlwy.net";
+const uint16_t AUDIO_BACKEND_PORT = 53228;
 
 // ---------------- Camera pins (AI-Thinker standard header -- confirmed working) ----------------
 #define CAM_PIN_PWDN   32
