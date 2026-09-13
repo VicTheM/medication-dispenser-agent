@@ -278,6 +278,7 @@ void loop() {
     }
 
     case DeviceState::MONITOR_PICKUP: {
+      displayMessage("Pick Your", "Meds");
       static float baselineWeight = 0;
       static bool baselineTaken = false;
       static bool doorOpened = false;
@@ -323,7 +324,7 @@ void loop() {
     case DeviceState::REPORTING: {
       // The CAM board is already recording/uploading the adherence capture
       // (triggered back in DISPENSING) - just wait for its pass/fail result.
-      displayMessage("Confirming", "adherence...");
+      displayMessage("Recording", "video...");
       bool ok = camWaitForResult(VIDEO_TIMEOUT_MS);
       if (ok) {
         logEvent("CAM board reported adherence capture OK");
