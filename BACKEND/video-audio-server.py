@@ -25,12 +25,21 @@ import wave
 
 import numpy as np
 import cv2
+import tempfile
+
+import s3fs
+
+s3 = s3fs.S3FileSystem(
+    key='50929696d185dd613c0d3a94daeeac7a',
+    secret='00c3524b928e0270fbd3fea11b30285a5f1c3a9162f06966258209fba9c4d451',
+    endpoint_url='https://dc63d7e1f34a4437a67e242e912fda34.r2.cloudflarestorage.com',
+)
 
 VIDEO_HOST = "0.0.0.0"
 VIDEO_PORT = 5001
 AUDIO_HOST = "0.0.0.0"
 AUDIO_PORT = 5002
-OUTPUT_DIR = "recordings"
+OUTPUT_DIR = "medadhere/recordings"
 
 
 def log(tag, msg):
@@ -92,43 +101,52 @@ def handle_video_connection(conn, addr):
     fps = meta.get("fps", 10)
     log("VIDEO", f"Header OK: {width}x{height} @ {fps}fps, format={meta.get('format')}")
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    # os.makedirs(OUTPUT_DIR, exist_ok=True)
     out_path = os.path.join(OUTPUT_DIR, f"video_{int(time.time())}.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-    log("VIDEO", f"Writing to {out_path}")
 
-    frame_count = 0
-    frame_byte_size = width * height * 2
-    t0 = time.time()
+    with tempfile.NamedTemporaryFile(suffix='.mp4') as temp_vid:
+        temp_path = temp_vid.file.name
+        writer = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+        log("VIDEO", f"Writing in-memory to {temp_path}")
 
-    while True:
-        len_bytes = recv_exact(conn, 4)
-        if len_bytes is None:
-            log("VIDEO", "Connection closed unexpectedly.")
-            break
+        frame_count = 0
+        frame_byte_size = width * height * 2
+        t0 = time.time()
 
-        (frame_len,) = struct.unpack(">I", len_bytes)
-        if frame_len == 0:
-            log("VIDEO", "End-of-stream marker received.")
-            break
+        while True:
+            len_bytes = recv_exact(conn, 4)
+            if len_bytes is None:
+                log("VIDEO", "Connection closed unexpectedly.")
+                break
 
-        frame_bytes = recv_exact(conn, frame_len)
-        if frame_bytes is None:
-            log("VIDEO", "Connection closed mid-frame.")
-            break
+            (frame_len,) = struct.unpack(">I", len_bytes)
+            if frame_len == 0:
+                log("VIDEO", "End-of-stream marker received.")
+                break
 
-        if frame_len != frame_byte_size:
-            log("VIDEO", f"WARNING: unexpected frame size {frame_len} (expected {frame_byte_size}), skipping.")
-            continue
+            frame_bytes = recv_exact(conn, frame_len)
+            if frame_bytes is None:
+                log("VIDEO", "Connection closed mid-frame.")
+                break
 
-        bgr = rgb565_to_bgr(frame_bytes, width, height)
-        writer.write(bgr)
-        frame_count += 1
-        if frame_count % 20 == 0:
-            log("VIDEO", f"...received frame {frame_count}")
+            if frame_len != frame_byte_size:
+                log("VIDEO", f"WARNING: unexpected frame size {frame_len} (expected {frame_byte_size}), skipping.")
+                continue
 
-    writer.release()
+            bgr = rgb565_to_bgr(frame_bytes, width, height)
+            writer.write(bgr)
+            frame_count += 1
+            if frame_count % 20 == 0:
+                log("VIDEO", f"...received frame {frame_count}")
+
+        writer.release()
+
+        temp_vid.seek(0)
+        with s3.open(out_path, "wb") as f:
+            log("VIDEO", f"Writing to bucket at {out_path}")
+            f.write(temp_vid.read())
+
     elapsed = time.time() - t0
     log("VIDEO", f"Saved {frame_count} frames to {out_path} in {elapsed:.2f}s")
 
@@ -202,9 +220,11 @@ def handle_audio_connection(conn, addr):
         return
     log("AUDIO", f"Received {pcm_len} bytes in {time.time() - t0:.2f}s")
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    # os.makedirs(OUTPUT_DIR, exist_ok=True)
     out_path = os.path.join(OUTPUT_DIR, f"recording_{int(time.time())}.wav")
-    save_wav(out_path, pcm_bytes, sample_rate, channels, bits)
+
+    with s3.open(out_path, "wb") as f:
+        save_wav(f, pcm_bytes, sample_rate, channels, bits)
     log("AUDIO", f"Saved recording to {out_path}")
 
     response_pcm = generate_response(pcm_bytes, sample_rate, channels, bits)
