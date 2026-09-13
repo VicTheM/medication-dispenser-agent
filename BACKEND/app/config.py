@@ -1,4 +1,5 @@
 import os
+
 from pydantic_settings import BaseSettings
 
 
@@ -28,6 +29,12 @@ class Settings(BaseSettings):
     # --- Device / hardware ---
     NUM_COMPARTMENTS: int = 7  # A - G
     DEVICE_OFFLINE_AFTER_SECONDS: int = 120  # no heartbeat/telemetry -> mark offline
+
+    # --- File Storage Bucket ---
+    S3_ENDPOINT: str = os.getenv("S3_ENDPOINT", "")
+    S3_ACCESS_KEY_ID: str = os.getenv("S3_ACCESS_KEY_ID", "")
+    S3_SECRET_ACCESS_KEY: str = os.getenv("S3_SECRET_ACCESS_KEY", "")
+
 
     class Config:
         env_file = ".env"

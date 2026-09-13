@@ -16,6 +16,7 @@ from app.database import SessionLocal, get_db
 from app.deps import authenticate_device
 from app.schedule_utils import build_device_schedule_payload
 from app.ws_manager import manager
+from app.bucket import s3
 
 router = APIRouter(prefix="/devices", tags=["Devices (hardware)"])
 
@@ -173,7 +174,7 @@ async def upload_adherence_video(
     ext = os.path.splitext(video.filename or "")[1] or ".mp4"
     filename = f"{event.id}_{uuid.uuid4().hex[:8]}{ext}"
     dest_path = os.path.join(settings.VIDEO_DIR, filename)
-    with open(dest_path, "wb") as f:
+    with s3.open(dest_path, "wb") as f:
         while chunk := await video.read(1024 * 1024):
             f.write(chunk)
 
@@ -276,7 +277,7 @@ async def voice_query(
     ext = ".mp3" if result.get("audio_format") == "mp3" else ".wav"
     filename = f"{uuid.uuid4().hex}{ext}"
     dest_path = os.path.join(settings.VOICE_DIR, filename)
-    with open(dest_path, "wb") as f:
+    with s3.open(dest_path, "wb") as f:
         f.write(audio_bytes_out)
 
     interaction = models.VoiceInteraction(
