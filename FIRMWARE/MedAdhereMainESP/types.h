@@ -12,8 +12,8 @@ enum class DeviceState {
   ALERTING,          // buzzing, waiting for the patient to approach
   DISPENSING,        // rotating carousel + releasing
   MONITOR_PICKUP,    // watching laser + weight to confirm pickup
-  REPORTING,         // uploading dispense event / video
-  VOICE_QUERY,       // long-press triggered: recording + asking the AI
+  REPORTING,         // waiting on the CAM board's video-task result
+  VOICE_QUERY,       // long-press triggered: CAM board handles the AI round trip
 };
 
 // ---------------------------------------------------------------------
@@ -27,13 +27,6 @@ struct CompartmentSlot {
   char scheduleId[40] = "";
   char medicationNames[80] = ""; // comma-joined, for display/telemetry only
   bool dispensedToday = false;   // reset at local midnight
-};
-
-// One frame in the Serial2 protocol to/from the ESP32-CAM board.
-// See CAM_SERIAL_PROTOCOL.md for the full spec.
-struct CamFrame {
-  char type = 0;
-  uint32_t length = 0;
 };
 
 // A single queued item while the device is offline.

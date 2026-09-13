@@ -432,7 +432,6 @@ static bool rawMultipartUpload(const String &path,
         lastByteAt = millis();
       }
     }
-    camConsumeTrailingChecksum();
   } else {
     client->write(ramBuffer, fileLen);
   }

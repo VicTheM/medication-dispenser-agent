@@ -18,6 +18,7 @@ DeviceCredentials storageLoad() {
   c.deviceUid    = prefs.getString(NVS_KEY_DEVICE_UID, "");
   c.deviceSecret = prefs.getString(NVS_KEY_DEV_SECRET, "");
   c.apPassword   = prefs.getString(NVS_KEY_AP_PASSWORD, CONFIG_AP_PASSWORD_DEFAULT);
+  c.utcOffsetHours = prefs.getInt(NVS_KEY_UTC_OFFSET, DEFAULT_UTC_OFFSET_HOURS);
   prefs.end();
 
   c.valid = c.wifiSsid.length() > 0 && c.deviceUid.length() > 0 && c.deviceSecret.length() > 0;
@@ -47,6 +48,12 @@ void storageSaveDeviceCreds(const String &uid, const String &secret) {
 void storageSaveApPassword(const String &pass) {
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putString(NVS_KEY_AP_PASSWORD, pass);
+  prefs.end();
+}
+
+void storageSaveUtcOffset(int hours) {
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putInt(NVS_KEY_UTC_OFFSET, hours);
   prefs.end();
 }
 
