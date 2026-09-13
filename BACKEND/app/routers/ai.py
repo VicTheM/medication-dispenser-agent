@@ -9,6 +9,7 @@ from app import ai_client, models, schemas
 from app.config import settings
 from app.database import get_db
 from app.deps import get_current_caregiver, get_current_caregiver_or_patient
+from app.bucket import s3
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -75,7 +76,7 @@ async def upload_knowledge_document(
 
     filename = f"{uuid.uuid4().hex}_{file.filename}"
     dest_path = os.path.join(settings.KNOWLEDGE_DIR, filename)
-    with open(dest_path, "wb") as f:
+    with s3.open(dest_path, "wb") as f:
         while chunk := await file.read(1024 * 1024):
             f.write(chunk)
 
