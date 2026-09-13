@@ -232,7 +232,7 @@ def generate_response(pcm_bytes, sample_rate, channels, bits):
         request_wav.seek(0)
 
         filename = f"recording_{int(time.time())}.wav"
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=180.0) as client:
             response = client.post(
                 AI_VOICE_URL,
                 files={
@@ -244,6 +244,7 @@ def generate_response(pcm_bytes, sample_rate, channels, bits):
             response.raise_for_status()
 
         response_data = response.json()
+        print("No exception yet")
         encoded_audio = response_data["audio_base64"]
         if encoded_audio.startswith("data:"):
             encoded_audio = encoded_audio.split(",", 1)[1]
@@ -321,9 +322,10 @@ def handle_audio_connection(conn, addr):
     log("AUDIO", f"Saved response audio to {response_path}")
 
     if response_pcm:
-        conn.sendall(struct.pack(">I", len(response_pcm)))
-        conn.sendall(response_pcm)
-        log("AUDIO", f"Sent {len(response_pcm)} bytes of response audio")
+        response_chunk = response_pcm[:600000]
+        conn.sendall(struct.pack(">I", len(response_chunk)))
+        conn.sendall(response_chunk)
+        log("AUDIO", f"Sent {len(response_chunk)} of {len(response_pcm)} bytes of response audio")
     else:
         conn.sendall(struct.pack(">I", 0))
         log("AUDIO", "Sent empty response (no audio)")
