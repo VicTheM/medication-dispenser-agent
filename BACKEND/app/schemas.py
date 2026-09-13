@@ -307,6 +307,7 @@ class VoiceInteractionOut(BaseModel):
     device_id: Optional[str] = None
     transcript: Optional[str] = None
     answer_text: Optional[str] = None
+    response_audio_path: Optional[str] = None
     citations: Optional[list] = None
     tool_results: Optional[list] = None
     audio_format: Optional[str] = None
