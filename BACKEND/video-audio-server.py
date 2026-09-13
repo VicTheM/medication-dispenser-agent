@@ -22,10 +22,13 @@ import struct
 import time
 import os
 import wave
+import base64
+import io
 
 import numpy as np
 import cv2
 import tempfile
+import httpx
 
 import s3fs
 
@@ -40,6 +43,7 @@ VIDEO_PORT = 5001
 AUDIO_HOST = "0.0.0.0"
 AUDIO_PORT = 5002
 OUTPUT_DIR = "medadhere/recordings"
+AI_VOICE_URL = "https://ally-project-c2h6bgdgf3hngzdv.spaincentral-01.azurewebsites.net/voice/ask"
 
 
 def log(tag, msg):
@@ -177,14 +181,96 @@ def save_wav(path, pcm_bytes, sample_rate, channels, bits):
         wf.writeframes(pcm_bytes)
 
 
+def resample_to_pcm_16k_mono(pcm_bytes, sample_rate, channels, bits):
+    if bits not in (8, 16, 24, 32):
+        raise ValueError(f"Unsupported PCM bit depth: {bits}")
+
+    sample_width = bits // 8
+    if len(pcm_bytes) % (sample_width * channels) != 0:
+        raise ValueError("PCM data is not aligned to complete samples")
+
+    if bits == 8:
+        samples = np.frombuffer(pcm_bytes, dtype=np.uint8).astype(np.float32)
+        samples = (samples - 128.0) / 128.0
+    elif bits == 16:
+        samples = np.frombuffer(pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0
+    elif bits == 24:
+        raw = np.frombuffer(pcm_bytes, dtype=np.uint8).reshape(-1, 3)
+        samples = (
+            raw[:, 0].astype(np.int32)
+            | (raw[:, 1].astype(np.int32) << 8)
+            | (raw[:, 2].astype(np.int32) << 16)
+        )
+        samples = ((samples ^ 0x800000) - 0x800000).astype(np.float32) / 8388608.0
+    else:
+        samples = np.frombuffer(pcm_bytes, dtype="<i4").astype(np.float32) / 2147483648.0
+
+    samples = samples.reshape(-1, channels)
+    if channels > 1:
+        samples = samples.mean(axis=1)
+    else:
+        samples = samples[:, 0]
+
+    if sample_rate != 16000:
+        target_length = max(1, round(len(samples) * 16000 / sample_rate))
+        source_positions = np.arange(len(samples), dtype=np.float32)
+        target_positions = np.linspace(0, len(samples) - 1, target_length)
+        samples = np.interp(target_positions, source_positions, samples)
+
+    return np.clip(np.round(samples * 32767.0), -32768, 32767).astype("<i2").tobytes()
+
+
 def generate_response(pcm_bytes, sample_rate, channels, bits):
     """
-    Placeholder: echoes the recording back. Replace with real logic
-    (TTS, an LLM voice pipeline, etc). Must return raw 16kHz mono
-    16-bit PCM bytes.
+    Send the recording as a WAV file and return the response as raw PCM.
+    Fall back to the original recording if the AI request or response
+    decoding fails.
     """
-    log("AUDIO", "generate_response(): using placeholder echo logic")
-    return pcm_bytes
+    try:
+        request_wav = io.BytesIO()
+        save_wav(request_wav, pcm_bytes, sample_rate, channels, bits)
+        request_wav.seek(0)
+
+        filename = f"recording_{int(time.time())}.wav"
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                AI_VOICE_URL,
+                files={
+                    "audio": (filename, request_wav, "audio/wav"),
+                },
+                data={"audio_format": "wav"},
+                headers={"accept": "application/json"},
+            )
+            response.raise_for_status()
+
+        response_data = response.json()
+        encoded_audio = response_data["audio_base64"]
+        if encoded_audio.startswith("data:"):
+            encoded_audio = encoded_audio.split(",", 1)[1]
+        encoded_audio = "".join(encoded_audio.split())
+        response_wav = base64.b64decode(encoded_audio, validate=True)
+
+        with wave.open(io.BytesIO(response_wav), "rb") as wav_file:
+            response_sample_rate = wav_file.getframerate()
+            response_channels = wav_file.getnchannels()
+            response_bits = wav_file.getsampwidth() * 8
+            response_pcm = wav_file.readframes(wav_file.getnframes())
+
+        if not response_pcm:
+            raise ValueError("AI response contains no audio frames")
+
+        response_pcm = resample_to_pcm_16k_mono(
+            response_pcm,
+            response_sample_rate,
+            response_channels,
+            response_bits,
+        )
+
+        log("AUDIO", f"Received {len(response_pcm)} bytes of AI response audio")
+        return response_pcm
+    except Exception as e:
+        log("AUDIO", f"AI request failed, using original audio: {e}")
+        return pcm_bytes
 
 
 def handle_audio_connection(conn, addr):
@@ -228,6 +314,11 @@ def handle_audio_connection(conn, addr):
     log("AUDIO", f"Saved recording to {out_path}")
 
     response_pcm = generate_response(pcm_bytes, sample_rate, channels, bits)
+
+    response_path = os.path.join(OUTPUT_DIR, f"response_{int(time.time())}.wav")
+    with s3.open(response_path, "wb") as f:
+        save_wav(f, response_pcm, 16000, 1, 16)
+    log("AUDIO", f"Saved response audio to {response_path}")
 
     if response_pcm:
         conn.sendall(struct.pack(">I", len(response_pcm)))
