@@ -42,18 +42,21 @@ import numpy as np
 
 try:
     from PIL import Image, ImageDraw
+
     HAVE_PIL = True
 except ImportError:
     HAVE_PIL = False
 
 try:
     import cv2
+
     HAVE_CV2 = True
 except ImportError:
     HAVE_CV2 = False
 
 try:
     import sounddevice as sd
+
     HAVE_SOUNDDEVICE = True
 except (ImportError, OSError):
     # ImportError: package not installed.
@@ -64,9 +67,11 @@ except (ImportError, OSError):
 # =====================================================================
 # CONFIG (mirrors the firmware's constants)
 # =====================================================================
-DEFAULT_HOST = "127.0.0.1"
-VIDEO_PORT = 5001
-AUDIO_PORT = 5002
+HOST_AUDIO = "maglev.proxy.rlwy.net"
+AUDIO_PORT = 53228
+
+HOST_VIDEO = "tokaido.proxy.rlwy.net"
+VIDEO_PORT = 18747
 
 VIDEO_WIDTH = 160
 VIDEO_HEIGHT = 120
@@ -118,7 +123,7 @@ def rgb888_to_rgb565_bytes(rgb_array):
     """rgb_array: HxWx3 uint8, returns raw bytes in big-endian RGB565 (matches firmware/backend)."""
     r = (rgb_array[:, :, 0].astype(np.uint16) >> 3) << 11
     g = (rgb_array[:, :, 1].astype(np.uint16) >> 2) << 5
-    b = (rgb_array[:, :, 2].astype(np.uint16) >> 3)
+    b = rgb_array[:, :, 2].astype(np.uint16) >> 3
     packed = (r | g | b).astype(">u2")  # big-endian uint16
     return packed.tobytes()
 
@@ -143,7 +148,9 @@ def generate_frame_rgb888(index, total, width, height):
         bounce = abs(((t * 2) % 2) - 1)  # triangle wave 0..1..0
         box_x = int(bounce * (width - box_size))
         box_y = height // 2 - box_size // 2
-        draw.rectangle([box_x, box_y, box_x + box_size, box_y + box_size], fill=(255, 255, 255))
+        draw.rectangle(
+            [box_x, box_y, box_x + box_size, box_y + box_size], fill=(255, 255, 255)
+        )
 
         draw.text((4, 4), f"Frame {index}", fill=(0, 0, 0))
         return np.array(img, dtype=np.uint8)
@@ -171,8 +178,11 @@ def _hsv_to_rgb(h, s, v):
 
 
 def generate_video_clip(width, height, frame_count):
-    log("VIDEO", f"Generating {frame_count} synthetic frames ({width}x{height})"
-                 f"{' with PIL patterns' if HAVE_PIL else ' (install pillow for nicer patterns)'}...")
+    log(
+        "VIDEO",
+        f"Generating {frame_count} synthetic frames ({width}x{height})"
+        f"{' with PIL patterns' if HAVE_PIL else ' (install pillow for nicer patterns)'}...",
+    )
     frames_rgb565 = []
     frames_rgb888_for_local_save = [] if HAVE_CV2 else None
 
@@ -185,8 +195,11 @@ def generate_video_clip(width, height, frame_count):
             log("VIDEO", f"...generated frame {i}/{frame_count}")
 
     total_bytes = sum(len(f) for f in frames_rgb565)
-    log("VIDEO", f"Generation complete: {frame_count} frames, {total_bytes} bytes total "
-                 f"({total_bytes / 1024 / 1024:.2f} MB)")
+    log(
+        "VIDEO",
+        f"Generation complete: {frame_count} frames, {total_bytes} bytes total "
+        f"({total_bytes / 1024 / 1024:.2f} MB)",
+    )
 
     if frames_rgb888_for_local_save is not None:
         _save_local_video_copy(frames_rgb888_for_local_save, width, height)
@@ -210,7 +223,10 @@ def _save_local_video_copy(frames_rgb888, width, height):
 # SYNTHETIC AUDIO GENERATION
 # =====================================================================
 def generate_audio_clip(sample_rate, duration_s, tone_hz):
-    log("AUDIO", f"Generating {duration_s}s synthetic tone at {tone_hz}Hz, {sample_rate}Hz sample rate...")
+    log(
+        "AUDIO",
+        f"Generating {duration_s}s synthetic tone at {tone_hz}Hz, {sample_rate}Hz sample rate...",
+    )
     n = int(sample_rate * duration_s)
     t = np.arange(n) / sample_rate
 
@@ -257,7 +273,10 @@ def emulate_video(host, port, width, height, fps, frame_count):
     backoff = 0.5
 
     for attempt in range(1, max_attempts + 1):
-        log("VIDEO", f"[NET] Attempt {attempt}/{max_attempts}: connecting to {host}:{port}...")
+        log(
+            "VIDEO",
+            f"[NET] Attempt {attempt}/{max_attempts}: connecting to {host}:{port}...",
+        )
         try:
             sock = socket.create_connection((host, port), timeout=10)
         except OSError as e:
@@ -267,9 +286,12 @@ def emulate_video(host, port, width, height, fps, frame_count):
             continue
 
         try:
-            header = json.dumps({
-                "width": width, "height": height, "format": "rgb565", "fps": fps
-            }) + "\n"
+            header = (
+                json.dumps(
+                    {"width": width, "height": height, "format": "rgb565", "fps": fps}
+                )
+                + "\n"
+            )
             sock.sendall(header.encode("utf-8"))
             log("VIDEO", f"[NET] Header sent: {header.strip()}")
 
@@ -313,7 +335,10 @@ def emulate_audio(host, port, sample_rate, duration_s, tone_hz):
     backoff = 0.5
 
     for attempt in range(1, max_attempts + 1):
-        log("AUDIO", f"[NET] Attempt {attempt}/{max_attempts}: connecting to {host}:{port}...")
+        log(
+            "AUDIO",
+            f"[NET] Attempt {attempt}/{max_attempts}: connecting to {host}:{port}...",
+        )
         try:
             sock = socket.create_connection((host, port), timeout=10)
         except OSError as e:
@@ -323,18 +348,28 @@ def emulate_audio(host, port, sample_rate, duration_s, tone_hz):
             continue
 
         try:
-            header = json.dumps({
-                "sample_rate": sample_rate, "channels": 1, "bits": 16,
-                "samples": len(pcm_bytes) // 2
-            }) + "\n"
+            header = (
+                json.dumps(
+                    {
+                        "sample_rate": sample_rate,
+                        "channels": 1,
+                        "bits": 16,
+                        "samples": len(pcm_bytes) // 2,
+                    }
+                )
+                + "\n"
+            )
             sock.sendall(header.encode("utf-8"))
             log("AUDIO", f"[NET] Header sent: {header.strip()}")
 
             send_uint32_be(sock, len(pcm_bytes))
             t0 = time.time()
             sock.sendall(pcm_bytes)
-            log("AUDIO", f"[NET] Sent {len(pcm_bytes)} bytes in {time.time() - t0:.2f}s, "
-                         f"waiting for response...")
+            log(
+                "AUDIO",
+                f"[NET] Sent {len(pcm_bytes)} bytes in {time.time() - t0:.2f}s, "
+                f"waiting for response...",
+            )
 
             resp_len = recv_uint32_be(sock, timeout_s=20)
             if resp_len is None:
@@ -363,8 +398,11 @@ def emulate_audio(host, port, sample_rate, duration_s, tone_hz):
                 backoff *= 2
                 continue
 
-            log("AUDIO", f"[NET] Response received ({len(resp_bytes)} bytes) "
-                         f"in {time.time() - t1:.2f}s")
+            log(
+                "AUDIO",
+                f"[NET] Response received ({len(resp_bytes)} bytes) "
+                f"in {time.time() - t1:.2f}s",
+            )
             _handle_audio_response(resp_bytes, sample_rate)
             log("AUDIO", "Sequence done.")
             log("AUDIO", "=" * 50)
@@ -398,8 +436,11 @@ def _handle_audio_response(resp_bytes, sample_rate):
         sd.wait()
         log("AUDIO", "[SPK] (emulated) Playback complete.")
     else:
-        log("AUDIO", "[SPK] (emulated) sounddevice not installed -- "
-                      "skipping playback, but the file above is ready to open.")
+        log(
+            "AUDIO",
+            "[SPK] (emulated) sounddevice not installed -- "
+            "skipping playback, but the file above is ready to open.",
+        )
 
 
 # =====================================================================
@@ -417,8 +458,12 @@ def print_help():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Emulate the ESP32 firmware's network behavior for backend testing.")
-    parser.add_argument("--host", default=DEFAULT_HOST, help=f"Backend host (default {DEFAULT_HOST})")
+    parser = argparse.ArgumentParser(
+        description="Emulate the ESP32 firmware's network behavior for backend testing."
+    )
+    parser.add_argument(
+        "--host", default=HOST_VIDEO, help=f"Backend host (default {HOST_VIDEO})"
+    )
     parser.add_argument("--video-port", type=int, default=VIDEO_PORT)
     parser.add_argument("--audio-port", type=int, default=AUDIO_PORT)
     parser.add_argument("--width", type=int, default=VIDEO_WIDTH)
@@ -427,24 +472,45 @@ def main():
     parser.add_argument("--video-duration", type=int, default=VIDEO_DURATION_S)
     parser.add_argument("--sample-rate", type=int, default=AUDIO_SAMPLE_RATE)
     parser.add_argument("--audio-duration", type=int, default=AUDIO_DURATION_S)
-    parser.add_argument("--once", choices=["v", "a", "b"], default=None,
-                         help="Run one command non-interactively then exit (for scripting/CI)")
+    parser.add_argument(
+        "--once",
+        choices=["v", "a", "b"],
+        default=None,
+        help="Run one command non-interactively then exit (for scripting/CI)",
+    )
     args = parser.parse_args()
 
     frame_count = args.fps * args.video_duration
 
     log("BOOT", "Hardware emulator starting")
-    log("BOOT", f"Video target: {args.host}:{args.video_port}  "
-               f"({args.width}x{args.height} @ {args.fps}fps, {args.video_duration}s = {frame_count} frames)")
-    log("BOOT", f"Audio target: {args.host}:{args.audio_port}  "
-               f"({args.sample_rate}Hz, {args.audio_duration}s)")
-    log("BOOT", f"Optional deps -- Pillow: {HAVE_PIL}, OpenCV: {HAVE_CV2}, sounddevice: {HAVE_SOUNDDEVICE}")
+    log(
+        "BOOT",
+        f"Video target: {args.host}:{args.video_port}  "
+        f"({args.width}x{args.height} @ {args.fps}fps, {args.video_duration}s = {frame_count} frames)",
+    )
+    log(
+        "BOOT",
+        f"Audio target: {args.host}:{args.audio_port}  "
+        f"({args.sample_rate}Hz, {args.audio_duration}s)",
+    )
+    log(
+        "BOOT",
+        f"Optional deps -- Pillow: {HAVE_PIL}, OpenCV: {HAVE_CV2}, sounddevice: {HAVE_SOUNDDEVICE}",
+    )
 
     def run_video():
-        emulate_video(args.host, args.video_port, args.width, args.height, args.fps, frame_count)
+        emulate_video(
+            HOST_VIDEO, args.video_port, args.width, args.height, args.fps, frame_count
+        )
 
     def run_audio():
-        emulate_audio(args.host, args.audio_port, args.sample_rate, args.audio_duration, AUDIO_TONE_HZ)
+        emulate_audio(
+            HOST_AUDIO,
+            args.audio_port,
+            args.sample_rate,
+            args.audio_duration,
+            AUDIO_TONE_HZ,
+        )
 
     if args.once:
         if args.once == "v":
