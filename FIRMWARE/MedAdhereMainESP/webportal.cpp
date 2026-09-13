@@ -6,6 +6,7 @@
 
 static WebServer s_server(80);
 static bool s_active = false;
+static bool s_saveCompleted = false;
 static unsigned long s_lastRequestMs = 0;
 
 static const char PAGE_FORM[] PROGMEM = R"HTML(
@@ -58,8 +59,7 @@ static void handleSave() {
   if (apPass.length() >= 8) storageSaveApPassword(apPass);
 
   s_server.send(200, "text/html", FPSTR(PAGE_SAVED));
-  delay(1500);
-  ESP.restart();
+  s_saveCompleted = true;
 }
 
 void webportalStart() {
@@ -79,6 +79,7 @@ void webportalStart() {
   s_server.begin();
 
   s_active = true;
+  s_saveCompleted = false;
   s_lastRequestMs = millis();
 
   Serial.printf("[portal] AP '%s' started, password required, config at http://%s/\n",
@@ -102,4 +103,10 @@ void webportalStop() {
 
 bool webportalIsActive() {
   return s_active;
+}
+
+bool webportalSaveCompleted() {
+  if (!s_saveCompleted) return false;
+  s_saveCompleted = false;
+  return true;
 }

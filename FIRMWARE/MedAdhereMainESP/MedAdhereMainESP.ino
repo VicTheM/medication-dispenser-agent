@@ -57,7 +57,6 @@ void setup() {
   buttonInit();
   ultrasonicInit();
   beamInit();
-  scaleInit();
   carouselInit();
   camlinkInit();
 
@@ -129,6 +128,13 @@ void loop() {
         displayMessage("Setup mode", "Connect to AP");
       }
       webportalLoop();
+      if (webportalSaveCompleted()) {
+        webportalStop();
+        s_creds = storageLoad();
+        displayMessage("Saved", "Connecting...");
+        enterState(s_creds.valid ? DeviceState::WIFI_CONNECTING : DeviceState::CONFIG_PORTAL);
+        break;
+      }
       if (!webportalIsActive()) {
         // idle-timed-out out of config mode - fall back to whatever creds we have
         s_creds = storageLoad();
@@ -177,78 +183,63 @@ void loop() {
     }
 
     case DeviceState::ALERTING: {
+      // Start the active-low alarm before checking for the person.
+      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
       float dist = ultrasonicReadCM();
       bool approached = (dist > 0 && dist <= APPROACH_RANGE_CM);
 
       if (approached) {
-        indicatorsSetPattern(IndicatorPattern::PERSON_APPROACHED); // "changes the sound"
-        displayMessage("Welcome!", "Dispensing...");
-        delay(600); // brief, deliberate pause so the tone-change is perceptible before dispensing
+        displayMessage("Person detected", "Dispensing...");
         enterState(DeviceState::DISPENSING);
         break;
       }
 
-      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
       String label = "Compartment " + compartmentLetter(s_activeCompartment);
       displayShowIdle("Time for meds!", label);
-
-      if (millis() - s_stateEnteredAt > ALERT_MAX_WAIT_MS) {
-        Serial.println("[state] gave up waiting for approach");
-        reportDispense(s_activeCompartment, "skipped", !wifiIsConnected());
-        enterState(DeviceState::NORMAL);
-      }
       break;
     }
 
     case DeviceState::DISPENSING: {
       static bool s_carouselCmdSent = false;
+
       if (!s_carouselCmdSent) {
         carouselGoTo(s_activeCompartment);
         s_carouselCmdSent = true;
       }
-      indicatorsSetPattern(IndicatorPattern::DISPENSING);
+      // The alarm remains active while the medication is being dispensed.
+      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
       displayMessage("Dispensing", compartmentLetter(s_activeCompartment));
 
       if (s_carouselCmdSent && !carouselIsMoving() && millis() - s_stateEnteredAt > 300) {
         s_carouselCmdSent = false; // ready for the next dispense
         reportDispense(s_activeCompartment, "success", !wifiIsConnected());
         camSendControl('V', ADHERENCE_VIDEO_MS);
+        displayMessage("Open door", "and pick it");
         enterState(DeviceState::MONITOR_PICKUP);
       }
       break;
     }
 
     case DeviceState::MONITOR_PICKUP: {
-      static float baselineWeight = 0;
-      static bool baselineTaken = false;
       static bool doorOpened = false;
-
-      if (!baselineTaken) {
-        baselineWeight = scaleReadGrams();
-        baselineTaken = true;
-        doorOpened = false;
+      static unsigned long s_lastEnteredAt = 0;
+      if (s_lastEnteredAt != s_stateEnteredAt) {
+        doorOpened = false; // fresh entry into this state - reset for the new dose
+        s_lastEnteredAt = s_stateEnteredAt;
       }
 
       if (beamObstacleDetected() == false) doorOpened = true; // door out of the way at least once
 
-      float now_g = scaleReadGrams();
-      bool weightChanged = fabs(now_g - baselineWeight) >= TRAY_PICKUP_DELTA_G;
-      bool pickedUp = doorOpened && weightChanged;
-
-      if (pickedUp) {
-        indicatorsSetPattern(IndicatorPattern::PICKUP_OK);
+      if (doorOpened) {
+        indicatorsSetPattern(IndicatorPattern::PICKUP_OK); // stops the alarm
         displayMessage("Great job!", "Medication taken");
-        baselineTaken = false;
         enterState(DeviceState::REPORTING);
         break;
       }
 
-      if (millis() - s_stateEnteredAt > PICKUP_MONITOR_MS) {
-        indicatorsSetPattern(IndicatorPattern::PICKUP_MISSED);
-        displayMessage("Not picked up", "Check on patient");
-        baselineTaken = false;
-        enterState(DeviceState::REPORTING);
-      }
+      // Keep the active-low alarm sounding until the door is opened.
+      indicatorsSetPattern(IndicatorPattern::WAITING_APPROACH);
+      displayMessage("Open door", "and pick it");
       break;
     }
 
