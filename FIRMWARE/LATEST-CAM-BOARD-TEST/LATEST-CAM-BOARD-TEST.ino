@@ -98,7 +98,7 @@ const uint16_t AUDIO_BACKEND_PORT = 5002;
 #define I2S_SPK_BCLK      14   // BCLK / SCK
 #define I2S_SPK_LRC       15   // WS / LRCLK
 #define I2S_SPK_DOUT      13   // DIN on MAX98357A
-#define MIC_PIN           12   // ADC1_CH5, safe / unused by camera
+#define MIC_PIN           33   // ADC1_CH5, safe / unused by camera and Wi-Fi
 
 // ---------------- Video config ----------------
 #define CAM_FRAMESIZE FRAMESIZE_QQVGA

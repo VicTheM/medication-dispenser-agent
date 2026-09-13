@@ -262,7 +262,10 @@ void loop() {
       playRecordedAudio(recordBuffer, RECORD_SAMPLES);
     }
   }
-  delay(10);
+  delay(1000);
+  Serial.println("--------------------------------------------------");
+  Serial.println("[STEP 1] Playing startup audio clip");
+  playPCMFile(STARTUP_FILE);
 }
 
 /*
