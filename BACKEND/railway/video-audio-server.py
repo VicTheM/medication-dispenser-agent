@@ -150,7 +150,7 @@ def handle_video_connection(conn, addr):
             f.write(temp_vid.read())
 
         resp = create_upload_record("audio", out_path)
-        log("VIDEO", f"Record written to DB. Id: {resp.id}")
+        log("VIDEO", f"Record written to DB. Id: {resp['id']}")
 
     elapsed = time.time() - t0
     log("VIDEO", f"Saved {frame_count} frames to {out_path} in {elapsed:.2f}s")
@@ -272,9 +272,9 @@ def generate_response(pcm_bytes, sample_rate, channels, bits):
         return pcm_bytes
 
 
-def create_upload_record(upload_type, path):
+def create_upload_record(upload_type:str, path:str):
     endpoint = f"{API_BASE_URL}/uploads/"
-    file_url = f"{S3_PUBLIC_ENDPOINT}/{path}"
+    file_url = f"{S3_PUBLIC_ENDPOINT}/{path.removeprefix("medadhere/")}"
 
     payload = {"upload_type": upload_type, "url": file_url}
 
@@ -343,10 +343,10 @@ def handle_audio_connection(conn, addr):
     log("AUDIO", f"Saved response audio to bucket at {response_path}")
 
     resp_aud_rec = create_upload_record("audio", out_path)
-    log("AUDIO", f"Recording written to DB. Id: {resp_aud_rec.id}")
+    log("AUDIO", f"Recording written to DB. Id: {resp_aud_rec['id']}")
 
     resp_aud_resp = create_upload_record("audio", response_path)
-    log("AUDIO", f"AI Response audio written to DB. Id: {resp_aud_resp.id}")
+    log("AUDIO", f"AI Response audio written to DB. Id: {resp_aud_resp['id']}")
 
     if response_pcm:
         response_chunk = response_pcm[:600000]
