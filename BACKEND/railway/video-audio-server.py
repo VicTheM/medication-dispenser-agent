@@ -1,8 +1,8 @@
 """
 Railway-compatible backend for the ESP32-CAM combined video+audio firmware.
 
-Railway only allows one exposed port per service. This script uses the 
-SERVER_TYPE environment variable to run either the video or audio server 
+Railway only allows one exposed port per service. This script uses the
+SERVER_TYPE environment variable to run either the video or audio server
 on the dynamic PORT assigned by Railway.
 
 Install deps:
@@ -38,7 +38,8 @@ s3 = s3fs.S3FileSystem(
 HOST = "0.0.0.0"
 OUTPUT_DIR = "medadhere/recordings"
 AI_VOICE_URL = os.getenv("AI_VOICE_URL", "")
-
+API_BASE_URL = os.getenv("API_BASE_URL", "")
+S3_PUBLIC_ENDPOINT = os.getenv("S3_PUBLIC_ENDPOINT", "")
 
 
 def log(tag, msg):
@@ -103,7 +104,7 @@ def handle_video_connection(conn, addr):
     out_path = os.path.join(OUTPUT_DIR, f"video_{int(time.time())}.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
-    with tempfile.NamedTemporaryFile(suffix='.mp4') as temp_vid:
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as temp_vid:
         temp_path = temp_vid.file.name
         writer = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
         log("VIDEO", f"Writing in-memory to {temp_path}")
@@ -129,7 +130,10 @@ def handle_video_connection(conn, addr):
                 break
 
             if frame_len != frame_byte_size:
-                log("VIDEO", f"WARNING: unexpected frame size {frame_len} (expected {frame_byte_size}), skipping.")
+                log(
+                    "VIDEO",
+                    f"WARNING: unexpected frame size {frame_len} (expected {frame_byte_size}), skipping.",
+                )
                 continue
 
             bgr = rgb565_to_bgr(frame_bytes, width, height)
@@ -144,6 +148,9 @@ def handle_video_connection(conn, addr):
         with s3.open(out_path, "wb") as f:
             log("VIDEO", f"Writing to bucket at {out_path}")
             f.write(temp_vid.read())
+
+        resp = create_upload_record("audio", out_path)
+        log("VIDEO", f"Record written to DB. Id: {resp.id}")
 
     elapsed = time.time() - t0
     log("VIDEO", f"Saved {frame_count} frames to {out_path} in {elapsed:.2f}s")
@@ -197,7 +204,9 @@ def resample_to_pcm_16k_mono(pcm_bytes, sample_rate, channels, bits):
         )
         samples = ((samples ^ 0x800000) - 0x800000).astype(np.float32) / 8388608.0
     else:
-        samples = np.frombuffer(pcm_bytes, dtype="<i4").astype(np.float32) / 2147483648.0
+        samples = (
+            np.frombuffer(pcm_bytes, dtype="<i4").astype(np.float32) / 2147483648.0
+        )
 
     samples = samples.reshape(-1, channels)
     if channels > 1:
@@ -263,6 +272,27 @@ def generate_response(pcm_bytes, sample_rate, channels, bits):
         return pcm_bytes
 
 
+def create_upload_record(upload_type, path):
+    endpoint = f"{API_BASE_URL}/uploads/"
+    file_url = f"{S3_PUBLIC_ENDPOINT}/{path}"
+
+    payload = {"upload_type": upload_type, "url": file_url}
+
+    try:
+        with httpx.Client() as client:
+            response = client.post(endpoint, json=payload, timeout=180.0)
+            response.raise_for_status()
+
+            return response.json()
+
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+    except httpx.RequestError as e:
+        print(f"Network/Request Error: {str(e)}")
+
+    return None
+
+
 def handle_audio_connection(conn, addr):
     log("AUDIO", f"Connection from {addr}")
 
@@ -280,7 +310,10 @@ def handle_audio_connection(conn, addr):
     sample_rate = meta["sample_rate"]
     channels = meta.get("channels", 1)
     bits = meta.get("bits", 16)
-    log("AUDIO", f"Header OK: {sample_rate}Hz {channels}ch {bits}bit, samples={meta.get('samples')}")
+    log(
+        "AUDIO",
+        f"Header OK: {sample_rate}Hz {channels}ch {bits}bit, samples={meta.get('samples')}",
+    )
 
     len_bytes = recv_exact(conn, 4)
     if len_bytes is None:
@@ -307,13 +340,22 @@ def handle_audio_connection(conn, addr):
     response_path = os.path.join(OUTPUT_DIR, f"response_{int(time.time())}.wav")
     with s3.open(response_path, "wb") as f:
         save_wav(f, response_pcm, 16000, 1, 16)
-    log("AUDIO", f"Saved response audio to {response_path}")
+    log("AUDIO", f"Saved response audio to bucket at {response_path}")
+
+    resp_aud_rec = create_upload_record("audio", out_path)
+    log("AUDIO", f"Recording written to DB. Id: {resp_aud_rec.id}")
+
+    resp_aud_resp = create_upload_record("audio", response_path)
+    log("AUDIO", f"AI Response audio written to DB. Id: {resp_aud_resp.id}")
 
     if response_pcm:
         response_chunk = response_pcm[:600000]
         conn.sendall(struct.pack(">I", len(response_chunk)))
         conn.sendall(response_chunk)
-        log("AUDIO", f"Sent {len(response_chunk)} of {len(response_pcm)} bytes of response audio")
+        log(
+            "AUDIO",
+            f"Sent {len(response_chunk)} of {len(response_pcm)} bytes of response audio",
+        )
     else:
         conn.sendall(struct.pack(">I", 0))
         log("AUDIO", "Sent empty response (no audio)")
@@ -349,7 +391,10 @@ def main():
         log("MAIN", f"Starting exclusively AUDIO server on port {port}")
         audio_server(port)
     else:
-        log("MAIN", "CRITICAL ERROR: SERVER_TYPE environment variable must be set to 'video' or 'audio'")
+        log(
+            "MAIN",
+            "CRITICAL ERROR: SERVER_TYPE environment variable must be set to 'video' or 'audio'",
+        )
         exit(1)
 
 

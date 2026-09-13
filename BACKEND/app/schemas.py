@@ -1,12 +1,14 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from enum import Enum
 
 
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+
 
 class Token(BaseModel):
     access_token: str
@@ -41,13 +43,17 @@ class LoginRequest(BaseModel):
 # Patient
 # ---------------------------------------------------------------------------
 
+
 class PatientCreate(BaseModel):
     full_name: str
     date_of_birth: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[EmailStr] = None
-    password: Optional[str] = Field(default=None, min_length=6,
-                                     description="Set to let the patient log in themselves; optional.")
+    password: Optional[str] = Field(
+        default=None,
+        min_length=6,
+        description="Set to let the patient log in themselves; optional.",
+    )
     notes: Optional[str] = None
     timezone: Optional[str] = "UTC"
 
@@ -78,8 +84,11 @@ class PatientOut(BaseModel):
 # Device
 # ---------------------------------------------------------------------------
 
+
 class DeviceRegister(BaseModel):
-    device_uid: str = Field(description="Serial number / QR code printed on the hardware unit")
+    device_uid: str = Field(
+        description="Serial number / QR code printed on the hardware unit"
+    )
 
 
 class DeviceOut(BaseModel):
@@ -117,13 +126,16 @@ class DeviceSecretOut(BaseModel):
 
 
 class DeviceCommandRequest(BaseModel):
-    command_type: str = Field(description="update_schedule|manual_dispense|restart|sync|configure")
+    command_type: str = Field(
+        description="update_schedule|manual_dispense|restart|sync|configure"
+    )
     payload: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
 # Medication
 # ---------------------------------------------------------------------------
+
 
 class MedicationCreate(BaseModel):
     name: str
@@ -161,13 +173,16 @@ class MedicationOut(BaseModel):
 # Schedule (compartment assignment)
 # ---------------------------------------------------------------------------
 
+
 class ScheduleCreate(BaseModel):
     compartment: str = Field(description="One letter A-G")
     medication_ids: List[str]
     dispense_time: str = Field(description="24h HH:MM in the patient's local timezone")
     frequency: str = Field(default="daily", description="daily|specific_days|as_needed")
     days_of_week: Optional[List[str]] = Field(
-        default=None, description="Required when frequency=specific_days, e.g. ['mon','wed','fri']")
+        default=None,
+        description="Required when frequency=specific_days, e.g. ['mon','wed','fri']",
+    )
     start_date: Optional[str] = None
     end_date: Optional[str] = None
 
@@ -203,6 +218,7 @@ class ScheduleOut(BaseModel):
 # ---------------------------------------------------------------------------
 # Dispense / adherence / telemetry
 # ---------------------------------------------------------------------------
+
 
 class DispenseEventIn(BaseModel):
     compartment: str
@@ -280,6 +296,7 @@ class AdherenceVideoOut(BaseModel):
 # AI / voice
 # ---------------------------------------------------------------------------
 
+
 class AskRequest(BaseModel):
     question: str
 
@@ -313,12 +330,31 @@ class KnowledgeDocumentOut(BaseModel):
 # Notifications
 # ---------------------------------------------------------------------------
 
+
 class NotificationOut(BaseModel):
     id: str
     patient_id: str
     type: str
     message: str
     read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UploadType(str, Enum):
+    VIDEO = "video"
+    AUDIO = "audio"
+
+class UploadCreate(BaseModel):
+    upload_type: UploadType
+    url: HttpUrl
+
+class UploadResponse(BaseModel):
+    id: str
+    type: UploadType
+    url: str
     created_at: datetime
 
     class Config:

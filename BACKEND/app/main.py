@@ -5,10 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import models
 from app.database import Base, engine
-from app.routers import ai, auth, caregivers, devices, patients
+from app.routers import ai, auth, caregivers, devices, patients, uploads
 from app.scheduler import start_scheduler, stop_scheduler
 
-Base.metadata.create_all(bind=engine)  # SQLite file created/migrated on boot - no separate DB server needed
+Base.metadata.create_all(
+    bind=engine
+)  # SQLite file created/migrated on boot - no separate DB server needed
 
 
 @asynccontextmanager
@@ -21,7 +23,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="MedAdhere API",
     description="Medication scheduling & adherence backend: caregivers, patients, "
-                 "the 7-compartment dispenser hardware, and the Ally Healthwise AI assistant.",
+    "the 7-compartment dispenser hardware, and the Ally Healthwise AI assistant.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -39,6 +41,7 @@ app.include_router(caregivers.router)
 app.include_router(patients.router)
 app.include_router(devices.router)
 app.include_router(ai.router)
+app.include_router(uploads.router)
 
 
 @app.get("/", tags=["System"])

@@ -70,6 +70,10 @@ class NotificationType(str, enum.Enum):
     SCHEDULE_UPDATED = "schedule_updated"
     GENERAL = "general"
 
+class UploadType(str, enum.Enum):
+    VIDEO = "video"
+    AUDIO = "audio"
+    
 
 # ---------------------------------------------------------------------------
 # Association table: which medications are bundled into a compartment schedule
@@ -100,7 +104,6 @@ class Caregiver(Base):
 
     patients = relationship("Patient", back_populates="caregiver", cascade="all, delete-orphan")
     knowledge_documents = relationship("KnowledgeDocument", back_populates="caregiver", cascade="all, delete-orphan")
-
 
 class Patient(Base):
     __tablename__ = "patients"
@@ -319,3 +322,12 @@ class Notification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="notifications")
+
+
+class Uploads(Base):
+    __tablename__ = "uploads"
+
+    id = Column(String, primary_key=True, default=gen_id)
+    type = Column(Enum(UploadType), nullable=False)
+    url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
